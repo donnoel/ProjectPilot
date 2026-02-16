@@ -7,7 +7,8 @@ struct ProjectPilotApp: App {
     var body: some Scene {
         MenuBarExtra("ProjectPilot", systemImage: "hammer.fill") {
             ProjectPilotPopover(vm: vm)
-                .frame(width: 360)
+                // IMPORTANT: match the popover's fixed size so it doesn't crop/offset.
+                .frame(width: 460, height: 420, alignment: .topLeading)
         }
         .menuBarExtraStyle(.window)
     }

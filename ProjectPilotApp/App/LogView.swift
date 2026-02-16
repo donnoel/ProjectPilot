@@ -40,3 +40,24 @@ struct LogView: View {
         }
     }
 }
+
+extension ProjectPilotViewModel {
+    /// UI log event used by `LogView`.
+    struct LogEvent: Identifiable, Hashable {
+        enum Level: String, Hashable {
+            case info
+            case success
+            case error
+        }
+
+        let id: UUID
+        let level: Level
+        let message: String
+
+        init(id: UUID = UUID(), level: Level, message: String) {
+            self.id = id
+            self.level = level
+            self.message = message
+        }
+    }
+}
