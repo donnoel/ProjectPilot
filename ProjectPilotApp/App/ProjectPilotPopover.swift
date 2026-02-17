@@ -5,147 +5,108 @@ struct ProjectPilotPopover: View {
     @ObservedObject var vm: ProjectPilotViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
+        ZStack {
+            GlassBackground()
 
-            projectSection
+            VStack(alignment: .leading, spacing: 10) {
+                header
 
-            platformsSection
-
-            platformSettingsSection
-
-            if let status = vm.statusLine {
-                statusPill(status)
-            }
-
-            Spacer(minLength: 0)
-
-            actions
-        }
-        .padding(12)
-        .frame(width: 460, height: 560, alignment: .topLeading)
-    }
-
-    private var projectSection: some View {
-        GroupBox {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("Name")
-                    .font(.headline)
-                    .frame(width: 110, alignment: .leading)
-
-                TextField("e.g. LoomTools", text: $vm.projectName)
-                    .textFieldStyle(.roundedBorder)
-            }
-            .padding(.vertical, 2)
-        } label: {
-            Text("Project")
-                .font(.headline)
-        }
-    }
-
-    private var platformsSection: some View {
-        GroupBox {
-            VStack(spacing: 10) {
-                ForEach(ProjectPilotViewModel.Platform.allCases) { platform in
-                    Toggle(platform.rawValue, isOn: Binding(
-                        get: { vm.selectedPlatforms.contains(platform) },
-                        set: { isOn in
-                            if isOn { vm.selectedPlatforms.insert(platform) }
-                            else { vm.selectedPlatforms.remove(platform) }
-                            if vm.selectedPlatforms.isEmpty { vm.selectedPlatforms.insert(.macOS) } // keep at least one
-                        }
-                    ))
-                }
-            }
-            .toggleStyle(.switch)
-            .padding(.vertical, 2)
-        } label: {
-            Text("Platforms")
-                .font(.headline)
-        }
-    }
-
-    private var platformSettingsSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                if vm.selectedPlatforms.contains(.iOS) {
-                    platformSettingsRow(
-                        title: "iOS",
-                        bundleId: $vm.iOSBundleIdentifier,
-                        deployment: $vm.iOSDeploymentTarget
-                    )
+                section("Project") {
+                    LabeledContent("Name") {
+                        TextField("e.g. LoomTools", text: $vm.projectName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 260)
+                    }
+                    .font(.subheadline)
                 }
 
-                if vm.selectedPlatforms.contains(.macOS) {
-                    platformSettingsRow(
-                        title: "macOS",
-                        bundleId: $vm.macOSBundleIdentifier,
-                        deployment: $vm.macOSDeploymentTarget
-                    )
+                section("Platforms") {
+                    HStack(spacing: 8) {
+                        platformToggle(.iOS, systemImage: "iphone")
+                        platformToggle(.macOS, systemImage: "laptopcomputer")
+                        platformToggle(.tvOS, systemImage: "appletv")
+
+                        Spacer(minLength: 0)
+                    }
                 }
 
-                if vm.selectedPlatforms.contains(.tvOS) {
-                    platformSettingsRow(
-                        title: "tvOS",
-                        bundleId: $vm.tvOSBundleIdentifier,
-                        deployment: $vm.tvOSDeploymentTarget
-                    )
+                section("GitHub") {
+                    Toggle(isOn: $vm.createPublicGitHubRepo) {
+                        Text("Public repo")
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
                 }
+
+                if let status = vm.statusLine {
+                    statusPill(status)
+                }
+
+                Divider().opacity(0.35)
+
+                actions
             }
-            .padding(.vertical, 2)
-        } label: {
-            Text("Platform Settings")
-                .font(.headline)
+            .padding(14)
         }
+        .frame(width: 420, alignment: .topLeading)
     }
 
-    private func platformSettingsRow(
-        title: String,
-        bundleId: Binding<String>,
-        deployment: Binding<String>
-    ) -> some View {
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
 
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("Bundle ID")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 110, alignment: .leading)
-
-                TextField("e.g. com.yourcompany.app", text: bundleId)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("Deployment")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 110, alignment: .leading)
-
-                TextField("e.g. 26.0", text: deployment)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 140)
-
-                Spacer(minLength: 0)
-            }
+            content()
         }
+        .padding(12)
+        .background(.thinMaterial)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func platformToggle(_ platform: ProjectPilotViewModel.Platform, systemImage: String) -> some View {
+        Toggle(isOn: Binding(
+            get: { vm.selectedPlatforms.contains(platform) },
+            set: { isOn in
+                if isOn { vm.selectedPlatforms.insert(platform) }
+                else { vm.selectedPlatforms.remove(platform) }
+                if vm.selectedPlatforms.isEmpty { vm.selectedPlatforms.insert(.macOS) } // keep at least one
+            }
+        )) {
+            Label(platform.rawValue, systemImage: systemImage)
+        }
+        .toggleStyle(.button)
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .tint(vm.selectedPlatforms.contains(platform) ? .accentColor : .gray)
     }
 
     private var header: some View {
         HStack(spacing: 10) {
             Image(systemName: "hammer.fill")
+                .symbolRenderingMode(.hierarchical)
 
             Text("ProjectPilot")
-                .font(.headline)
+                .font(.system(size: 15, weight: .semibold))
                 .lineLimit(1)
 
             Spacer()
 
-            Button("Clear") { vm.clearStatus() }
-                .disabled(vm.statusLine == nil || vm.isRunning)
+            Button {
+                vm.clearStatus()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+            }
+            .buttonStyle(.plain)
+            .help("Clear status")
+            .disabled(vm.statusLine == nil || vm.isRunning)
         }
+        .padding(.bottom, 2)
     }
 
     private func statusPill(_ status: ProjectPilotViewModel.StatusLine) -> some View {
@@ -169,6 +130,10 @@ struct ProjectPilotPopover: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(.thinMaterial)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
@@ -182,13 +147,48 @@ struct ProjectPilotPopover: View {
 
     private var actions: some View {
         HStack(spacing: 10) {
-            Button("Create") { vm.createProjectSkeleton() }
+            Button {
+                vm.createProjectSkeleton()
+            } label: {
+                Label("Create", systemImage: "sparkles")
+            }
                 .keyboardShortcut(.defaultAction)
                 .disabled(vm.isRunning || vm.projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.borderedProminent)
 
             Spacer()
 
             Button("Quit") { NSApplication.shared.terminate(nil) }
         }
+    }
+}
+
+private struct GlassBackground: View {
+    var body: some View {
+        VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+private struct VisualEffectView: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
+        nsView.state = .active
     }
 }

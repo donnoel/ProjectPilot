@@ -29,12 +29,11 @@ final class ProjectPilotViewModel: ObservableObject {
     @Published var macOSBundleIdentifier: String = ""
     @Published var tvOSBundleIdentifier: String = ""
 
-    @Published var iOSDeploymentTarget: String = "26.0"
-    @Published var macOSDeploymentTarget: String = "26.0"
-    @Published var tvOSDeploymentTarget: String = "26.0"
-
     @Published var statusLine: StatusLine? = nil
     @Published var isRunning: Bool = false
+
+    /// If enabled, `gh repo create` will create a public repository. Default is private.
+    @Published var createPublicGitHubRepo: Bool = false
 
     // Your hard-coded root.
     private let developmentRootURL = URL(fileURLWithPath: "/Users/donnoel/Development", isDirectory: true)
@@ -78,6 +77,7 @@ final class ProjectPilotViewModel: ObservableObject {
 
             setStatus(.info, "Initializing git…")
             _ = try runInDirectory(projectURL, ["/usr/bin/git", "init"])
+            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
             _ = try runInDirectory(projectURL, ["/usr/bin/git", "add", "-A"])
             _ = try? runInDirectory(projectURL, ["/usr/bin/git", "commit", "-m", "Initial commit"])
 
@@ -164,7 +164,6 @@ final class ProjectPilotViewModel: ObservableObject {
 
         // Apply platform-specific settings.
         pbxproj = applyBundleIdentifiers(projectName: projectName, to: pbxproj)
-        pbxproj = applyDeploymentTargets(to: pbxproj)
 
 
         try pbxproj.write(to: pbxprojURL, atomically: true, encoding: .utf8)
@@ -298,32 +297,6 @@ final class ProjectPilotViewModel: ObservableObject {
         }
 
         return lines.joined(separator: "\n                ")
-    }
-
-    private func applyDeploymentTargets(to pbxproj: String) -> String {
-        var updated = pbxproj
-
-        if selectedPlatforms.contains(.iOS) {
-            updated = updated.replacingOccurrences(of: "IPHONEOS_DEPLOYMENT_TARGET = 26.0;",
-                                                  with: "IPHONEOS_DEPLOYMENT_TARGET = \(iOSDeploymentTarget);")
-        }
-        if selectedPlatforms.contains(.macOS) {
-            updated = updated.replacingOccurrences(of: "MACOSX_DEPLOYMENT_TARGET = 26.0;",
-                                                  with: "MACOSX_DEPLOYMENT_TARGET = \(macOSDeploymentTarget);")
-        }
-
-        // tvOS isn't present in the template by default. If selected, inject a deployment target near the iOS one.
-        if selectedPlatforms.contains(.tvOS), !updated.contains("TVOS_DEPLOYMENT_TARGET") {
-            if updated.contains("IPHONEOS_DEPLOYMENT_TARGET = \(iOSDeploymentTarget);") {
-                updated = updated.replacingOccurrences(of: "IPHONEOS_DEPLOYMENT_TARGET = \(iOSDeploymentTarget);",
-                                                      with: "IPHONEOS_DEPLOYMENT_TARGET = \(iOSDeploymentTarget);\n                TVOS_DEPLOYMENT_TARGET = \(tvOSDeploymentTarget);")
-            } else {
-                updated = updated.replacingOccurrences(of: "IPHONEOS_DEPLOYMENT_TARGET = 26.0;",
-                                                      with: "IPHONEOS_DEPLOYMENT_TARGET = 26.0;\n                TVOS_DEPLOYMENT_TARGET = \(tvOSDeploymentTarget);")
-            }
-        }
-
-        return updated
     }
 
     private func writeIfMissing(url: URL, contents: String) throws {
@@ -539,6 +512,8 @@ struct ContentView: View {
 
     private func setupGitHubRepo(name: String, projectURL: URL) throws {
         let gh = resolvedGHCommandPrefix()
+        let repoName = sanitizeRepoName(name)
+        let visibilityFlag = createPublicGitHubRepo ? "--public" : "--private"
 
         // Ensure auth is valid (gives clear error early)
         _ = try runInDirectory(projectURL, gh + ["auth", "status"])
@@ -546,14 +521,65 @@ struct ContentView: View {
         // Create repo and push.
         // If it already exists, gh will error; we catch and try “set remote + push”.
         do {
-            _ = try runInDirectory(projectURL, gh + ["repo", "create", name, "--private", "--source=.", "--remote=origin", "--push"])
+            _ = try runInDirectory(projectURL, gh + ["repo", "create", repoName, visibilityFlag, "--source=.", "--remote=origin", "--push"])
         } catch {
-            // Fallback: try adding remote if missing, then push.
-            // (We don't guess your org/user here; gh can infer with `repo view` but keep it simple.)
-            // If you want, we can improve this next.
-            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "remote", "-v"])
-            throw PPError("GitHub repo create failed. If the repo already exists, add remote manually or tell me your GitHub org/user and I’ll wire it cleanly.")
+            // Fallback: if the repo already exists, wire origin + push.
+            // We avoid guessing owner/org; `gh repo view <name>` resolves against your authenticated user.
+            let sshURL: String
+            do {
+                sshURL = try runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "sshUrl", "-q", ".sshUrl"]) 
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch {
+                throw PPError("GitHub repo create failed for '\(repoName)'. Make sure you're logged into GitHub CLI (run: gh auth login) and that the repo name is valid.")
+            }
+
+            // Ensure we have a main branch (Git's default can vary).
+            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
+
+            // Add origin if missing (or overwrite if it exists).
+            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "remote", "remove", "origin"])
+            _ = try runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "origin", sshURL])
+            _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "origin", "HEAD"])
         }
+    }
+
+    private func sanitizeRepoName(_ name: String) -> String {
+        // GitHub repo names can't include spaces. Keep it readable and stable.
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "repo" }
+
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        var out: [Character] = []
+        out.reserveCapacity(trimmed.count)
+
+        var lastWasDash = false
+        for ch in trimmed {
+            if ch == " " || ch == "\t" || ch == "\n" {
+                if !lastWasDash {
+                    out.append("-")
+                    lastWasDash = true
+                }
+                continue
+            }
+
+            if let scalar = ch.unicodeScalars.first, allowed.contains(scalar) {
+                out.append(ch)
+                lastWasDash = (ch == "-")
+            } else {
+                if !lastWasDash {
+                    out.append("-")
+                    lastWasDash = true
+                }
+            }
+        }
+
+        // Trim leading/trailing separators.
+        while out.first == "-" || out.first == "." { out.removeFirst() }
+        while out.last == "-" || out.last == "." { out.removeLast() }
+
+        let result = String(out)
+            .replacingOccurrences(of: "--", with: "-")
+        return result.isEmpty ? "repo" : result
     }
 
     // MARK: - Open in Xcode
