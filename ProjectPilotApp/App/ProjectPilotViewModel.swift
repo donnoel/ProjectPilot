@@ -76,7 +76,9 @@ final class ProjectPilotViewModel: ObservableObject {
             try writeGitignoreIfNeeded(at: projectURL)
 
             setStatus(.info, "Initializing git…")
-            _ = try runInDirectory(projectURL, ["/usr/bin/git", "init"])
+            // Ensure the local default branch is `main`.
+            // (`git init -b main` is supported on modern Git; we still defensively rename below.)
+            _ = try runInDirectory(projectURL, ["/usr/bin/git", "init", "-b", "main"])
             _ = try? runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
             _ = try runInDirectory(projectURL, ["/usr/bin/git", "add", "-A"])
             _ = try? runInDirectory(projectURL, ["/usr/bin/git", "commit", "-m", "Initial commit"])
@@ -521,9 +523,10 @@ struct ContentView: View {
         // Create repo and push.
         // If it already exists, gh will error; we catch and try “set remote + push”.
         do {
-            _ = try runInDirectory(projectURL, gh + ["repo", "create", repoName, visibilityFlag, "--source=.", "--remote=origin", "--push"])
+            // Use a dedicated remote name for GitHub.
+            _ = try runInDirectory(projectURL, gh + ["repo", "create", repoName, visibilityFlag, "--source=.", "--remote=github", "--push"])
         } catch {
-            // Fallback: if the repo already exists, wire origin + push.
+            // Fallback: if the repo already exists, wire `github` remote + push.
             // We avoid guessing owner/org; `gh repo view <name>` resolves against your authenticated user.
             let sshURL: String
             do {
@@ -536,10 +539,10 @@ struct ContentView: View {
             // Ensure we have a main branch (Git's default can vary).
             _ = try? runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
 
-            // Add origin if missing (or overwrite if it exists).
-            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "remote", "remove", "origin"])
-            _ = try runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "origin", sshURL])
-            _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "origin", "HEAD"])
+            // Add github remote if missing (or overwrite if it exists).
+            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "remote", "remove", "github"])
+            _ = try runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "github", sshURL])
+            _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "github", "HEAD"])
         }
     }
 
