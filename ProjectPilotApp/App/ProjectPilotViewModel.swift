@@ -22,7 +22,7 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     @Published var projectName: String = ""
-    @Published var selectedPlatforms: Set<Platform> = [.macOS]
+    @Published var selectedPlatforms: Set<Platform> = [.iOS]
 
     // Platform-specific settings (applied into the generated Xcode project).
     @Published var iOSBundleIdentifier: String = ""
@@ -124,6 +124,10 @@ final class ProjectPilotViewModel: ObservableObject {
         try FileManager.default.createDirectory(at: appFolderURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: unitTestsURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: uiTestsURL, withIntermediateDirectories: true)
+
+        // Project README
+        try writeIfMissing(url: projectURL.appendingPathComponent("README.md"),
+                           contents: readmeTemplate(projectName: projectName))
 
         // App sources
         try writeIfMissing(url: appFolderURL.appendingPathComponent("\(projectName)App.swift"),
@@ -508,6 +512,45 @@ struct ContentView: View {
     <true/>
 </dict>
 </plist>
+"""
+    }
+
+    private func readmeTemplate(projectName: String) -> String {
+        """
+# \(projectName)
+
+<p align="center">
+  <img src="https://img.shields.io/badge/SwiftUI-app-orange?logo=swift">
+  <img src="https://img.shields.io/badge/Platform-multiplatform-blue">
+</p>
+
+## Overview
+\(projectName) is a SwiftUI app scaffold created by **ProjectPilot**. This README is intentionally minimal and will grow as the project evolves.
+
+## Requirements
+- macOS with Xcode installed
+- Swift / SwiftUI
+
+## Getting Started
+1. Open `\(projectName).xcodeproj`
+2. Select a destination (Mac, iPhone Simulator, etc.)
+3. Build and Run
+
+## Project Structure
+```text
+\(projectName)/
+├── \(projectName)/
+├── \(projectName)Tests/
+└── \(projectName)UITests/
+```
+
+## Roadmap
+- [ ] Define app goals and core flows
+- [ ] Add real UI and data model
+- [ ] Add tests for key behaviors
+
+## Credits
+Created with **ProjectPilot**.
 """
     }
     // MARK: - GitHub
