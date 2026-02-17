@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ProjectPilotPopover: View {
@@ -11,6 +12,8 @@ struct ProjectPilotPopover: View {
 
             platformsSection
 
+            platformSettingsSection
+
             if let status = vm.statusLine {
                 statusPill(status)
             }
@@ -20,7 +23,7 @@ struct ProjectPilotPopover: View {
             actions
         }
         .padding(12)
-        .frame(width: 460, height: 420, alignment: .topLeading)
+        .frame(width: 460, height: 560, alignment: .topLeading)
     }
 
     private var projectSection: some View {
@@ -59,6 +62,74 @@ struct ProjectPilotPopover: View {
         } label: {
             Text("Platforms")
                 .font(.headline)
+        }
+    }
+
+    private var platformSettingsSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                if vm.selectedPlatforms.contains(.iOS) {
+                    platformSettingsRow(
+                        title: "iOS",
+                        bundleId: $vm.iOSBundleIdentifier,
+                        deployment: $vm.iOSDeploymentTarget
+                    )
+                }
+
+                if vm.selectedPlatforms.contains(.macOS) {
+                    platformSettingsRow(
+                        title: "macOS",
+                        bundleId: $vm.macOSBundleIdentifier,
+                        deployment: $vm.macOSDeploymentTarget
+                    )
+                }
+
+                if vm.selectedPlatforms.contains(.tvOS) {
+                    platformSettingsRow(
+                        title: "tvOS",
+                        bundleId: $vm.tvOSBundleIdentifier,
+                        deployment: $vm.tvOSDeploymentTarget
+                    )
+                }
+            }
+            .padding(.vertical, 2)
+        } label: {
+            Text("Platform Settings")
+                .font(.headline)
+        }
+    }
+
+    private func platformSettingsRow(
+        title: String,
+        bundleId: Binding<String>,
+        deployment: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline)
+
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("Bundle ID")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 110, alignment: .leading)
+
+                TextField("e.g. com.yourcompany.app", text: bundleId)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("Deployment")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 110, alignment: .leading)
+
+                TextField("e.g. 26.0", text: deployment)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 140)
+
+                Spacer(minLength: 0)
+            }
         }
     }
 

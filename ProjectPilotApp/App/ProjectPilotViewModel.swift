@@ -24,6 +24,15 @@ final class ProjectPilotViewModel: ObservableObject {
     @Published var projectName: String = ""
     @Published var selectedPlatforms: Set<Platform> = [.macOS]
 
+    // Platform-specific settings (applied into the generated Xcode project).
+    @Published var iOSBundleIdentifier: String = ""
+    @Published var macOSBundleIdentifier: String = ""
+    @Published var tvOSBundleIdentifier: String = ""
+
+    @Published var iOSDeploymentTarget: String = "26.0"
+    @Published var macOSDeploymentTarget: String = "26.0"
+    @Published var tvOSDeploymentTarget: String = "26.0"
+
     @Published var statusLine: StatusLine? = nil
     @Published var isRunning: Bool = false
 
@@ -48,6 +57,9 @@ final class ProjectPilotViewModel: ObservableObject {
             return
         }
 
+        // Ensure default platform settings exist before generation.
+        populatePlatformDefaultsIfNeeded(projectName: name)
+
         let projectURL = developmentRootURL.appendingPathComponent(name, isDirectory: true)
 
         isRunning = true
@@ -59,7 +71,10 @@ final class ProjectPilotViewModel: ObservableObject {
 
             setStatus(.info, "Generating Xcode project…")
             let typeName = sanitizeTypeName(name)
-            try await createXcodeProject(projectName: typeName, platforms: selectedPlatforms, at: projectURL)
+            try createXcodeProjectFromTemplate(projectName: typeName, at: projectURL)
+
+            // Git ignore (before first commit).
+            try writeGitignoreIfNeeded(at: projectURL)
 
             setStatus(.info, "Initializing git…")
             _ = try runInDirectory(projectURL, ["/usr/bin/git", "init"])
@@ -89,152 +104,290 @@ final class ProjectPilotViewModel: ObservableObject {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
 
-    // MARK: - Xcode Project Generation (XcodeGen)
+    // MARK: - Xcode Project Generation (Template .xcodeproj)
 
-    private func createXcodeProject(projectName: String, platforms: Set<Platform>, at projectURL: URL) async throws {
-        // Build a simple, real-folder layout (no “Sources/”), because you prefer
-        // Xcode showing folder references (blue) that mirror the filesystem.
-        let sharedURL = projectURL.appendingPathComponent("Shared", isDirectory: true)
-        try FileManager.default.createDirectory(at: sharedURL, withIntermediateDirectories: true)
-
-        // Create per-platform folders (macOS/iOS/tvOS) only for selected platforms.
-        for platform in platforms {
-            let platformURL = projectURL.appendingPathComponent(platform.folderName, isDirectory: true)
-            try FileManager.default.createDirectory(at: platformURL, withIntermediateDirectories: true)
-        }
-
-        // Shared ContentView
-        let contentViewURL = sharedURL.appendingPathComponent("ContentView.swift")
-        try contentViewTemplate(projectName: projectName).write(to: contentViewURL, atomically: true, encoding: .utf8)
-
-        // Platform App entrypoints
-        for platform in platforms {
-            let platformURL = projectURL.appendingPathComponent(platform.folderName, isDirectory: true)
-            let appFileURL = platformURL.appendingPathComponent("\(projectName)App.swift")
-            try appEntryTemplate(projectName: projectName, platform: platform).write(to: appFileURL, atomically: true, encoding: .utf8)
-        }
-
-        // Default-ish test folders (blue folder references) + placeholder tests.
+    /// Generates a multi-platform SwiftUI project whose **Xcode project settings** match the provided
+    /// `ExampleProjectFile.xcodeproj` template.
+    ///
+    /// Notes:
+    /// - This template uses Xcode's *file system synchronized groups* (PBXFileSystemSynchronizedRootGroup),
+    ///   so we don't need to enumerate every Swift file in the pbxproj.
+    /// - The only intended customization is the **project name**.
+    private func createXcodeProjectFromTemplate(projectName: String, at projectURL: URL) throws {
+        // Folder layout expected by the template.
+        let appFolderURL = projectURL.appendingPathComponent(projectName, isDirectory: true)
         let unitTestsURL = projectURL.appendingPathComponent("\(projectName)Tests", isDirectory: true)
         let uiTestsURL = projectURL.appendingPathComponent("\(projectName)UITests", isDirectory: true)
+
+        try FileManager.default.createDirectory(at: appFolderURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: unitTestsURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: uiTestsURL, withIntermediateDirectories: true)
 
-        let unitTestFileURL = unitTestsURL.appendingPathComponent("\(projectName)Tests.swift")
-        let uiTestFileURL = uiTestsURL.appendingPathComponent("\(projectName)UITests.swift")
+        // App sources
+        try writeIfMissing(url: appFolderURL.appendingPathComponent("\(projectName)App.swift"),
+                           contents: multiplatformAppTemplate(projectName: projectName))
+        try writeIfMissing(url: appFolderURL.appendingPathComponent("ContentView.swift"),
+                           contents: multiplatformContentViewTemplate())
+        try writeIfMissing(url: appFolderURL.appendingPathComponent("Info.plist"),
+                           contents: infoPlistTemplate())
+        try writeIfMissing(url: appFolderURL.appendingPathComponent("\(projectName).entitlements"),
+                           contents: entitlementsTemplate())
 
-        if !FileManager.default.fileExists(atPath: unitTestFileURL.path) {
-            try unitTestTemplate(projectName: projectName).write(to: unitTestFileURL, atomically: true, encoding: .utf8)
+        // Assets
+        try createDefaultAssetCatalogs(in: appFolderURL)
+
+        // Tests
+        try writeIfMissing(url: unitTestsURL.appendingPathComponent("\(projectName)Tests.swift"),
+                           contents: unitTestTemplate(projectName: projectName))
+        try writeIfMissing(url: uiTestsURL.appendingPathComponent("\(projectName)UITests.swift"),
+                           contents: uiTestTemplate(projectName: projectName))
+        try writeIfMissing(url: uiTestsURL.appendingPathComponent("\(projectName)UITestsLaunchTests.swift"),
+                           contents: uiLaunchTestTemplate(projectName: projectName))
+
+        // Xcode project
+        try writeXcodeproj(projectName: projectName, at: projectURL)
+    }
+
+    private func writeXcodeproj(projectName: String, at projectURL: URL) throws {
+        let xcodeprojURL = projectURL.appendingPathComponent("\(projectName).xcodeproj", isDirectory: true)
+        let workspaceURL = xcodeprojURL.appendingPathComponent("project.xcworkspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+
+        let pbxprojURL = xcodeprojURL.appendingPathComponent("project.pbxproj")
+        let workspaceContentsURL = workspaceURL.appendingPathComponent("contents.xcworkspacedata")
+
+        var pbxproj = Self.pbxprojTemplate
+            .replacingOccurrences(of: "ExampleProjectFile", with: projectName)
+
+        // Apply platform selections.
+        pbxproj = applySupportedPlatforms(to: pbxproj)
+
+        // Apply platform-specific settings.
+        pbxproj = applyBundleIdentifiers(projectName: projectName, to: pbxproj)
+        pbxproj = applyDeploymentTargets(to: pbxproj)
+
+
+        try pbxproj.write(to: pbxprojURL, atomically: true, encoding: .utf8)
+
+        let workspaceContents = """
+<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<Workspace
+   version = \"1.0\">
+   <FileRef
+      location = \"self:\">
+   </FileRef>
+</Workspace>
+"""
+        try workspaceContents.write(to: workspaceContentsURL, atomically: true, encoding: .utf8)
+    }
+
+    private func populatePlatformDefaultsIfNeeded(projectName: String) {
+        let base = "dn.\(sanitizeBundleComponent(projectName.lowercased()))"
+
+        if iOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            iOSBundleIdentifier = base
         }
-        if !FileManager.default.fileExists(atPath: uiTestFileURL.path) {
-            try uiTestTemplate(projectName: projectName).write(to: uiTestFileURL, atomically: true, encoding: .utf8)
+        if macOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            macOSBundleIdentifier = base
         }
-
-        // XcodeGen manifest + generate project
-        let ymlURL = projectURL.appendingPathComponent("project.yml")
-        try makeProjectYml(projectName: projectName, platforms: platforms).write(to: ymlURL, atomically: true, encoding: .utf8)
-
-        // Generate the .xcodeproj using XcodeGen.
-        let xcodegen = try resolveXcodeGen()
-        if xcodegen == "/usr/bin/env" {
-            _ = try run(["/usr/bin/env", "xcodegen", "generate"], cwd: projectURL)
-        } else {
-            _ = try run([xcodegen, "generate"], cwd: projectURL)
+        if tvOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            tvOSBundleIdentifier = base
         }
     }
 
-    private func makeProjectYml(projectName: String, platforms: Set<Platform>) -> String {
-        // Prefer macOS as the “primary” platform if selected; otherwise pick the first selected.
-        let orderedSelected = Platform.allCases.filter { platforms.contains($0) }
-        let primary = orderedSelected.first(where: { $0 == .macOS }) ?? orderedSelected.first ?? .macOS
-        let isMultiPlatform = Set(orderedSelected).count > 1
+    private func sanitizeBundleComponent(_ value: String) -> String {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789.-")
+        var out = ""
+        out.reserveCapacity(value.count)
+        for scalar in value.unicodeScalars {
+            if allowed.contains(scalar) {
+                out.unicodeScalars.append(scalar)
+            } else {
+                out.append("-")
+            }
+        }
+        return out
+            .replacingOccurrences(of: "--", with: "-")
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
+    }
 
-        func platformConfig(_ platform: Platform) -> (platformString: String, deployment: String, bundleSuffix: String, folderName: String) {
-            switch platform {
-            case .macOS:
-                return ("macOS", "14.0", "macos", platform.folderName)
-            case .iOS:
-                return ("iOS", "17.0", "ios", platform.folderName)
-            case .tvOS:
-                return ("tvOS", "17.0", "tvos", platform.folderName)
+    private func applySupportedPlatforms(to pbxproj: String) -> String {
+        // Template default: "iphoneos iphonesimulator macosx".
+        var platforms: [String] = []
+
+        if selectedPlatforms.contains(.iOS) {
+            platforms.append(contentsOf: ["iphoneos", "iphonesimulator"])
+        }
+        if selectedPlatforms.contains(.macOS) {
+            platforms.append("macosx")
+        }
+        if selectedPlatforms.contains(.tvOS) {
+            platforms.append(contentsOf: ["appletvos", "appletvsimulator"])
+        }
+
+        // Safety: always keep at least one.
+        if platforms.isEmpty {
+            platforms = ["macosx"]
+        }
+
+        let joined = platforms.joined(separator: " ")
+        return pbxproj.replacingOccurrences(of: "SUPPORTED_PLATFORMS = \"iphoneos iphonesimulator macosx\";",
+                                            with: "SUPPORTED_PLATFORMS = \"\(joined)\";")
+    }
+
+    private func applyBundleIdentifiers(projectName: String, to pbxproj: String) -> String {
+        let base = baseBundleIdentifier(projectName: projectName)
+        let tests = "\(base)Tests"
+        let uiTests = "\(base)UITests"
+
+        var updated = pbxproj
+
+        // First, replace template defaults.
+        updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName);",
+                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(base);")
+        updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName)Tests;",
+                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(tests);")
+        updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName)UITests;",
+                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(uiTests);")
+
+        // App target bundle id (add per-sdk overrides when they differ).
+        let appNeedOverrides = (selectedPlatforms.contains(.iOS) && iOSBundleIdentifier != base)
+            || (selectedPlatforms.contains(.macOS) && macOSBundleIdentifier != base)
+            || (selectedPlatforms.contains(.tvOS) && tvOSBundleIdentifier != base)
+
+        if appNeedOverrides {
+            let replacement = bundleIdentifierBlock(base: base)
+            updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = \(base);",
+                                                  with: replacement)
+        }
+
+        return updated
+    }
+
+    private func baseBundleIdentifier(projectName: String) -> String {
+        let fallback = "dn.\(sanitizeBundleComponent(projectName.lowercased()))"
+        if selectedPlatforms.contains(.iOS) {
+            return iOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : iOSBundleIdentifier
+        }
+        if selectedPlatforms.contains(.macOS) {
+            return macOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : macOSBundleIdentifier
+        }
+        if selectedPlatforms.contains(.tvOS) {
+            return tvOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : tvOSBundleIdentifier
+        }
+        return fallback
+    }
+
+    private func bundleIdentifierBlock(base: String) -> String {
+        var lines: [String] = []
+        lines.append("PRODUCT_BUNDLE_IDENTIFIER = \(base);")
+
+        if selectedPlatforms.contains(.iOS) {
+            let id = iOSBundleIdentifier
+            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*] = \(id);")
+            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*] = \(id);")
+        }
+        if selectedPlatforms.contains(.tvOS) {
+            let id = tvOSBundleIdentifier
+            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvos*] = \(id);")
+            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvsimulator*] = \(id);")
+        }
+        if selectedPlatforms.contains(.macOS) {
+            let id = macOSBundleIdentifier
+            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*] = \(id);")
+        }
+
+        return lines.joined(separator: "\n                ")
+    }
+
+    private func applyDeploymentTargets(to pbxproj: String) -> String {
+        var updated = pbxproj
+
+        if selectedPlatforms.contains(.iOS) {
+            updated = updated.replacingOccurrences(of: "IPHONEOS_DEPLOYMENT_TARGET = 26.0;",
+                                                  with: "IPHONEOS_DEPLOYMENT_TARGET = \(iOSDeploymentTarget);")
+        }
+        if selectedPlatforms.contains(.macOS) {
+            updated = updated.replacingOccurrences(of: "MACOSX_DEPLOYMENT_TARGET = 26.0;",
+                                                  with: "MACOSX_DEPLOYMENT_TARGET = \(macOSDeploymentTarget);")
+        }
+
+        // tvOS isn't present in the template by default. If selected, inject a deployment target near the iOS one.
+        if selectedPlatforms.contains(.tvOS), !updated.contains("TVOS_DEPLOYMENT_TARGET") {
+            if updated.contains("IPHONEOS_DEPLOYMENT_TARGET = \(iOSDeploymentTarget);") {
+                updated = updated.replacingOccurrences(of: "IPHONEOS_DEPLOYMENT_TARGET = \(iOSDeploymentTarget);",
+                                                      with: "IPHONEOS_DEPLOYMENT_TARGET = \(iOSDeploymentTarget);\n                TVOS_DEPLOYMENT_TARGET = \(tvOSDeploymentTarget);")
+            } else {
+                updated = updated.replacingOccurrences(of: "IPHONEOS_DEPLOYMENT_TARGET = 26.0;",
+                                                      with: "IPHONEOS_DEPLOYMENT_TARGET = 26.0;\n                TVOS_DEPLOYMENT_TARGET = \(tvOSDeploymentTarget);")
             }
         }
 
-        func appTargetName(for platform: Platform) -> String {
-            if isMultiPlatform { return "\(projectName)-\(platform.rawValue)" }
-            return projectName
+        return updated
+    }
+
+    private func writeIfMissing(url: URL, contents: String) throws {
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func createDefaultAssetCatalogs(in appFolderURL: URL) throws {
+        let assetsURL = appFolderURL.appendingPathComponent("Assets.xcassets", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: assetsURL.path) {
+            try FileManager.default.createDirectory(at: assetsURL, withIntermediateDirectories: true)
+            let contents = """
+{
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+"""
+            try contents.write(to: assetsURL.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
         }
 
-        // App targets
-        var targetsYAML: [String] = []
-        for platform in orderedSelected {
-            let cfg = platformConfig(platform)
-            let tName = appTargetName(for: platform)
-            let bundleId = "dn.\(projectName.lowercased()).\(cfg.bundleSuffix)"
-
-            targetsYAML.append(
+        // AccentColor
+        let accentURL = assetsURL.appendingPathComponent("AccentColor.colorset", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: accentURL.path) {
+            try FileManager.default.createDirectory(at: accentURL, withIntermediateDirectories: true)
+            let contents = """
+{
+  "colors" : [
+    {
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
 """
-  \(tName):
-    type: application
-    platform: \(cfg.platformString)
-    deploymentTarget: "\(cfg.deployment)"
-    bundleId: \(bundleId)
-    settings:
-      base:
-        GENERATE_INFOPLIST_FILE: YES
-    sources:
-      - path: Shared
-        type: folder
-      - path: \(cfg.folderName)
-        type: folder
-"""
-            )
+            try contents.write(to: accentURL.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
         }
 
-        // Unit Tests + UI Tests for the primary platform only (keeps the project simple and matches Xcode defaults).
-        let primaryTargetName = appTargetName(for: primary)
+        // AppIcon (placeholder; images can be added later)
+        let appIconURL = assetsURL.appendingPathComponent("AppIcon.appiconset", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: appIconURL.path) {
+            try FileManager.default.createDirectory(at: appIconURL, withIntermediateDirectories: true)
+            let contents = """
+{
+  "images" : [
+    {
+      "idiom" : "universal",
+      "platform" : "ios",
+      "size" : "1024x1024"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
+"""
+            try contents.write(to: appIconURL.appendingPathComponent("Contents.json"), atomically: true, encoding: .utf8)
+        }
 
-        targetsYAML.append(
-"""
-  \(projectName)Tests:
-    type: bundle.unit-test
-    platform: \(platformConfig(primary).platformString)
-    deploymentTarget: "\(platformConfig(primary).deployment)"
-    sources:
-      - path: \(projectName)Tests
-        type: folder
-    dependencies:
-      - target: \(primaryTargetName)
-"""
-        )
-
-        targetsYAML.append(
-"""
-  \(projectName)UITests:
-    type: bundle.ui-testing
-    platform: \(platformConfig(primary).platformString)
-    deploymentTarget: "\(platformConfig(primary).deployment)"
-    sources:
-      - path: \(projectName)UITests
-        type: folder
-    dependencies:
-      - target: \(primaryTargetName)
-"""
-        )
-
-        return """
-name: \(projectName)
-options:
-  createIntermediateGroups: false
-  indentWidth: 4
-  tabWidth: 4
-settings:
-  base:
-    SWIFT_VERSION: 5.0
-
-targets:
-\(targetsYAML.joined(separator: "\n"))
-"""
     }
 
     private func contentViewTemplate(projectName: String) -> String {
@@ -303,18 +456,97 @@ final class \(projectName)UITests: XCTestCase {
 }
 """
     }
+
+    private func uiLaunchTestTemplate(projectName: String) -> String {
+        """
+import XCTest
+
+final class \(projectName)UITestsLaunchTests: XCTestCase {
+    override class var runsForEachTargetApplicationUIConfiguration: Bool {
+        true
+    }
+
+    func testLaunch() throws {
+        let app = XCUIApplication()
+        app.launch()
+    }
+}
+"""
+    }
+
+    private func multiplatformAppTemplate(projectName: String) -> String {
+        """
+import SwiftUI
+
+@main
+struct \(projectName)App: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+"""
+    }
+
+    private func multiplatformContentViewTemplate() -> String {
+        """
+import SwiftUI
+
+struct ContentView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "globe")
+                .imageScale(.large)
+            Text("Hello, world!")
+        }
+        .padding()
+    }
+}
+
+#Preview {
+    ContentView()
+}
+"""
+    }
+
+    private func infoPlistTemplate() -> String {
+        """
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+</dict>
+</plist>
+"""
+    }
+
+    private func entitlementsTemplate() -> String {
+        """
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>
+"""
+    }
     // MARK: - GitHub
 
     private func setupGitHubRepo(name: String, projectURL: URL) throws {
-        let ghPath = resolveGH()
+        let gh = resolvedGHCommandPrefix()
 
         // Ensure auth is valid (gives clear error early)
-        _ = try runInDirectory(projectURL, [ghPath, "auth", "status"])
+        _ = try runInDirectory(projectURL, gh + ["auth", "status"])
 
         // Create repo and push.
         // If it already exists, gh will error; we catch and try “set remote + push”.
         do {
-            _ = try runInDirectory(projectURL, [ghPath, "repo", "create", name, "--private", "--source=.", "--remote=origin", "--push"])
+            _ = try runInDirectory(projectURL, gh + ["repo", "create", name, "--private", "--source=.", "--remote=origin", "--push"])
         } catch {
             // Fallback: try adding remote if missing, then push.
             // (We don't guess your org/user here; gh can infer with `repo view` but keep it simple.)
@@ -327,9 +559,11 @@ final class \(projectName)UITests: XCTestCase {
     // MARK: - Open in Xcode
 
     private func openInXcode(projectURL: URL) throws {
-        let xcodeproj = projectURL.appendingPathComponent("\(projectURL.lastPathComponent).xcodeproj", isDirectory: true)
+        // The folder name can include spaces, but the Xcode project name is a sanitized type name.
+        let xcodeprojName = sanitizeTypeName(projectURL.lastPathComponent)
+        let xcodeproj = projectURL.appendingPathComponent("\(xcodeprojName).xcodeproj", isDirectory: true)
         if !FileManager.default.fileExists(atPath: xcodeproj.path) {
-            throw PPError("Missing .xcodeproj at \(xcodeproj.lastPathComponent). (XcodeGen generation may have failed.)")
+            throw PPError("Missing .xcodeproj at \(xcodeproj.lastPathComponent).")
         }
         _ = try run([ "/usr/bin/open", "-a", "Xcode", xcodeproj.path ])
     }
@@ -352,16 +586,25 @@ final class \(projectName)UITests: XCTestCase {
         throw PPError("xcodegen not found. Install with: brew install xcodegen")
     }
 
-    private func resolveGH() -> String {
+    private func resolvedGHCommandPrefix() -> [String] {
         let candidates = [
             "/opt/homebrew/bin/gh",
             "/usr/local/bin/gh",
             "/usr/bin/gh"
         ]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
-            return path
+            return [path]
         }
-        return "gh" // rely on PATH; if missing, command will fail with a good error
+
+        // Fallback: PATH resolution via env.
+        // We *must* run through /usr/bin/env because Process does not resolve "gh" by itself.
+        return ["/usr/bin/env", "gh"]
+    }
+
+    private func writeGitignoreIfNeeded(at projectURL: URL) throws {
+        let url = projectURL.appendingPathComponent(".gitignore")
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        try Self.defaultGitignore.write(to: url, atomically: true, encoding: .utf8)
     }
 
     private func runInDirectory(_ directory: URL, _ argv: [String]) throws -> String {
@@ -462,6 +705,587 @@ final class \(projectName)UITests: XCTestCase {
     fastlane/screenshots
     fastlane/test_output
     """
+
+    // MARK: - Xcode Project Template
+
+    /// Raw pbxproj text taken from `ExampleProjectFile.xcodeproj`.
+    /// We generate a new project by copying this file and replacing `ExampleProjectFile` with the user’s project name.
+    private static let pbxprojTemplate = """
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {
+    };
+    objectVersion = 77;
+    objects = {
+
+/* Begin PBXContainerItemProxy section */
+        5A63FFDB2F44E19C00885BD6 /* PBXContainerItemProxy */ = {
+            isa = PBXContainerItemProxy;
+            containerPortal = 5A63FFC12F44E19C00885BD6 /* Project object */;
+            proxyType = 1;
+            remoteGlobalIDString = 5A63FFC82F44E19C00885BD6;
+            remoteInfo = ExampleProjectFile;
+        };
+        5A63FFE52F44E19C00885BD6 /* PBXContainerItemProxy */ = {
+            isa = PBXContainerItemProxy;
+            containerPortal = 5A63FFC12F44E19C00885BD6 /* Project object */;
+            proxyType = 1;
+            remoteGlobalIDString = 5A63FFC82F44E19C00885BD6;
+            remoteInfo = ExampleProjectFile;
+        };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+        5A63FFC92F44E19C00885BD6 /* ExampleProjectFile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExampleProjectFile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+        5A63FFDA2F44E19C00885BD6 /* ExampleProjectFileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ExampleProjectFileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        5A63FFE42F44E19C00885BD6 /* ExampleProjectFileUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ExampleProjectFileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+        5A63FFEC2F44E19C00885BD6 /* Exceptions for "ExampleProjectFile" folder in "ExampleProjectFile" target */ = {
+            isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+            membershipExceptions = (
+                Info.plist,
+            );
+            target = 5A63FFC82F44E19C00885BD6 /* ExampleProjectFile */;
+        };
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+        5A63FFCB2F44E19C00885BD6 /* ExampleProjectFile */ = {
+            isa = PBXFileSystemSynchronizedRootGroup;
+            exceptions = (
+                5A63FFEC2F44E19C00885BD6 /* Exceptions for "ExampleProjectFile" folder in "ExampleProjectFile" target */,
+            );
+            path = ExampleProjectFile;
+            sourceTree = "<group>";
+        };
+        5A63FFDD2F44E19C00885BD6 /* ExampleProjectFileTests */ = {
+            isa = PBXFileSystemSynchronizedRootGroup;
+            path = ExampleProjectFileTests;
+            sourceTree = "<group>";
+        };
+        5A63FFE72F44E19C00885BD6 /* ExampleProjectFileUITests */ = {
+            isa = PBXFileSystemSynchronizedRootGroup;
+            path = ExampleProjectFileUITests;
+            sourceTree = "<group>";
+        };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+        5A63FFC62F44E19C00885BD6 /* Frameworks */ = {
+            isa = PBXFrameworksBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+        5A63FFD72F44E19C00885BD6 /* Frameworks */ = {
+            isa = PBXFrameworksBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+        5A63FFE12F44E19C00885BD6 /* Frameworks */ = {
+            isa = PBXFrameworksBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+        5A63FFC02F44E19C00885BD6 = {
+            isa = PBXGroup;
+            children = (
+                5A63FFCB2F44E19C00885BD6 /* ExampleProjectFile */,
+                5A63FFDD2F44E19C00885BD6 /* ExampleProjectFileTests */,
+                5A63FFE72F44E19C00885BD6 /* ExampleProjectFileUITests */,
+                5A63FFCA2F44E19C00885BD6 /* Products */,
+            );
+            sourceTree = "<group>";
+        };
+        5A63FFCA2F44E19C00885BD6 /* Products */ = {
+            isa = PBXGroup;
+            children = (
+                5A63FFC92F44E19C00885BD6 /* ExampleProjectFile.app */,
+                5A63FFDA2F44E19C00885BD6 /* ExampleProjectFileTests.xctest */,
+                5A63FFE42F44E19C00885BD6 /* ExampleProjectFileUITests.xctest */,
+            );
+            name = Products;
+            sourceTree = "<group>";
+        };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+        5A63FFC82F44E19C00885BD6 /* ExampleProjectFile */ = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = 5A63FFED2F44E19C00885BD6 /* Build configuration list for PBXNativeTarget "ExampleProjectFile" */;
+            buildPhases = (
+                5A63FFC52F44E19C00885BD6 /* Sources */,
+                5A63FFC62F44E19C00885BD6 /* Frameworks */,
+                5A63FFC72F44E19C00885BD6 /* Resources */,
+            );
+            buildRules = (
+            );
+            dependencies = (
+            );
+            fileSystemSynchronizedGroups = (
+                5A63FFCB2F44E19C00885BD6 /* ExampleProjectFile */,
+            );
+            name = ExampleProjectFile;
+            packageProductDependencies = (
+            );
+            productName = ExampleProjectFile;
+            productReference = 5A63FFC92F44E19C00885BD6 /* ExampleProjectFile.app */;
+            productType = "com.apple.product-type.application";
+        };
+        5A63FFD92F44E19C00885BD6 /* ExampleProjectFileTests */ = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = 5A63FFF02F44E19C00885BD6 /* Build configuration list for PBXNativeTarget "ExampleProjectFileTests" */;
+            buildPhases = (
+                5A63FFD62F44E19C00885BD6 /* Sources */,
+                5A63FFD72F44E19C00885BD6 /* Frameworks */,
+                5A63FFD82F44E19C00885BD6 /* Resources */,
+            );
+            buildRules = (
+            );
+            dependencies = (
+                5A63FFDC2F44E19C00885BD6 /* PBXTargetDependency */,
+            );
+            fileSystemSynchronizedGroups = (
+                5A63FFDD2F44E19C00885BD6 /* ExampleProjectFileTests */,
+            );
+            name = ExampleProjectFileTests;
+            packageProductDependencies = (
+            );
+            productName = ExampleProjectFileTests;
+            productReference = 5A63FFDA2F44E19C00885BD6 /* ExampleProjectFileTests.xctest */;
+            productType = "com.apple.product-type.bundle.unit-test";
+        };
+        5A63FFE32F44E19C00885BD6 /* ExampleProjectFileUITests */ = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = 5A63FFF32F44E19C00885BD6 /* Build configuration list for PBXNativeTarget "ExampleProjectFileUITests" */;
+            buildPhases = (
+                5A63FFE02F44E19C00885BD6 /* Sources */,
+                5A63FFE12F44E19C00885BD6 /* Frameworks */,
+                5A63FFE22F44E19C00885BD6 /* Resources */,
+            );
+            buildRules = (
+            );
+            dependencies = (
+                5A63FFE62F44E19C00885BD6 /* PBXTargetDependency */,
+            );
+            fileSystemSynchronizedGroups = (
+                5A63FFE72F44E19C00885BD6 /* ExampleProjectFileUITests */,
+            );
+            name = ExampleProjectFileUITests;
+            packageProductDependencies = (
+            );
+            productName = ExampleProjectFileUITests;
+            productReference = 5A63FFE42F44E19C00885BD6 /* ExampleProjectFileUITests.xctest */;
+            productType = "com.apple.product-type.bundle.ui-testing";
+        };
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+        5A63FFC12F44E19C00885BD6 /* Project object */ = {
+            isa = PBXProject;
+            attributes = {
+                BuildIndependentTargetsInParallel = 1;
+                LastUpgradeCheck = 1630;
+                TargetAttributes = {
+                    5A63FFC82F44E19C00885BD6 = {
+                        CreatedOnToolsVersion = 16.3;
+                        DevelopmentTeam = H7LG8SK72M;
+                    };
+                    5A63FFD92F44E19C00885BD6 = {
+                        CreatedOnToolsVersion = 16.3;
+                        TestTargetID = 5A63FFC82F44E19C00885BD6;
+                    };
+                    5A63FFE32F44E19C00885BD6 = {
+                        CreatedOnToolsVersion = 16.3;
+                        TestTargetID = 5A63FFC82F44E19C00885BD6;
+                    };
+                };
+            };
+            buildConfigurationList = 5A63FFC42F44E19C00885BD6 /* Build configuration list for PBXProject "ExampleProjectFile" */;
+            compatibilityVersion = "Xcode 14.0";
+            developmentRegion = en;
+            hasScannedForEncodings = 0;
+            knownRegions = (
+                en,
+                Base,
+            );
+            mainGroup = 5A63FFC02F44E19C00885BD6;
+            productRefGroup = 5A63FFCA2F44E19C00885BD6 /* Products */;
+            projectDirPath = "";
+            projectRoot = "";
+            targets = (
+                5A63FFC82F44E19C00885BD6 /* ExampleProjectFile */,
+                5A63FFD92F44E19C00885BD6 /* ExampleProjectFileTests */,
+                5A63FFE32F44E19C00885BD6 /* ExampleProjectFileUITests */,
+            );
+        };
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+        5A63FFC72F44E19C00885BD6 /* Resources */ = {
+            isa = PBXResourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+        5A63FFD82F44E19C00885BD6 /* Resources */ = {
+            isa = PBXResourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+        5A63FFE22F44E19C00885BD6 /* Resources */ = {
+            isa = PBXResourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+        5A63FFC52F44E19C00885BD6 /* Sources */ = {
+            isa = PBXSourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+        5A63FFD62F44E19C00885BD6 /* Sources */ = {
+            isa = PBXSourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+        5A63FFE02F44E19C00885BD6 /* Sources */ = {
+            isa = PBXSourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (
+            );
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+        5A63FFDC2F44E19C00885BD6 /* PBXTargetDependency */ = {
+            isa = PBXTargetDependency;
+            target = 5A63FFC82F44E19C00885BD6 /* ExampleProjectFile */;
+            targetProxy = 5A63FFDB2F44E19C00885BD6 /* PBXContainerItemProxy */;
+        };
+        5A63FFE62F44E19C00885BD6 /* PBXTargetDependency */ = {
+            isa = PBXTargetDependency;
+            target = 5A63FFC82F44E19C00885BD6 /* ExampleProjectFile */;
+            targetProxy = 5A63FFE52F44E19C00885BD6 /* PBXContainerItemProxy */;
+        };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+        5A63FFEE2F44E19C00885BD6 /* Debug */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+                ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+                CODE_SIGN_ENTITLEMENTS = ExampleProjectFile/ExampleProjectFile.entitlements;
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 1;
+                DEVELOPMENT_TEAM = H7LG8SK72M;
+                ENABLE_APP_SANDBOX = YES;
+                ENABLE_HARDENED_RUNTIME = YES;
+                ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+                ENABLE_PREVIEWS = YES;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_FILE = ExampleProjectFile/Info.plist;
+                INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+                INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+                INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+                INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+                INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                LD_RUNPATH_SEARCH_PATHS = (
+                    "$(inherited)",
+                    "@executable_path/Frameworks",
+                );
+                MACOSX_DEPLOYMENT_TARGET = 26.0;
+                MARKETING_VERSION = 1.0;
+                PRODUCT_BUNDLE_IDENTIFIER = dn.ExampleProjectFile;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                REGISTER_APP_GROUPS = YES;
+                STRING_CATALOG_GENERATE_SYMBOLS = YES;
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+                SUPPORTS_MACCATALYST = NO;
+                SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SWIFT_APPROACHABLE_CONCURRENCY = YES;
+                SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+                SWIFT_EMIT_LOC_STRINGS = YES;
+                SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = "1,2";
+            };
+            name = Debug;
+        };
+        5A63FFEF2F44E19C00885BD6 /* Release */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+                ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+                CODE_SIGN_ENTITLEMENTS = ExampleProjectFile/ExampleProjectFile.entitlements;
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 1;
+                DEVELOPMENT_TEAM = H7LG8SK72M;
+                ENABLE_APP_SANDBOX = YES;
+                ENABLE_HARDENED_RUNTIME = YES;
+                ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+                ENABLE_PREVIEWS = YES;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_FILE = ExampleProjectFile/Info.plist;
+                INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+                INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+                INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+                INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+                INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                LD_RUNPATH_SEARCH_PATHS = (
+                    "$(inherited)",
+                    "@executable_path/Frameworks",
+                );
+                MACOSX_DEPLOYMENT_TARGET = 26.0;
+                MARKETING_VERSION = 1.0;
+                PRODUCT_BUNDLE_IDENTIFIER = dn.ExampleProjectFile;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                REGISTER_APP_GROUPS = YES;
+                STRING_CATALOG_GENERATE_SYMBOLS = YES;
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+                SUPPORTS_MACCATALYST = NO;
+                SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SWIFT_APPROACHABLE_CONCURRENCY = YES;
+                SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+                SWIFT_EMIT_LOC_STRINGS = YES;
+                SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = "1,2";
+            };
+            name = Release;
+        };
+        5A63FFF12F44E19C00885BD6 /* Debug */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                BUNDLE_LOADER = "$(TEST_HOST)";
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 1;
+                DEVELOPMENT_TEAM = H7LG8SK72M;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_FILE = ExampleProjectFileTests/Info.plist;
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                LD_RUNPATH_SEARCH_PATHS = (
+                    "$(inherited)",
+                    "@executable_path/Frameworks",
+                    "@loader_path/Frameworks",
+                );
+                MACOSX_DEPLOYMENT_TARGET = 26.0;
+                MARKETING_VERSION = 1.0;
+                PRODUCT_BUNDLE_IDENTIFIER = dn.ExampleProjectFileTests;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+                SUPPORTS_MACCATALYST = NO;
+                SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = "1,2";
+                TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ExampleProjectFile.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ExampleProjectFile";
+            };
+            name = Debug;
+        };
+        5A63FFF22F44E19C00885BD6 /* Release */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                BUNDLE_LOADER = "$(TEST_HOST)";
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 1;
+                DEVELOPMENT_TEAM = H7LG8SK72M;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_FILE = ExampleProjectFileTests/Info.plist;
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                LD_RUNPATH_SEARCH_PATHS = (
+                    "$(inherited)",
+                    "@executable_path/Frameworks",
+                    "@loader_path/Frameworks",
+                );
+                MACOSX_DEPLOYMENT_TARGET = 26.0;
+                MARKETING_VERSION = 1.0;
+                PRODUCT_BUNDLE_IDENTIFIER = dn.ExampleProjectFileTests;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+                SUPPORTS_MACCATALYST = NO;
+                SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = "1,2";
+                TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ExampleProjectFile.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ExampleProjectFile";
+            };
+            name = Release;
+        };
+        5A63FFF42F44E19C00885BD6 /* Debug */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 1;
+                DEVELOPMENT_TEAM = H7LG8SK72M;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_FILE = ExampleProjectFileUITests/Info.plist;
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                LD_RUNPATH_SEARCH_PATHS = (
+                    "$(inherited)",
+                    "@executable_path/Frameworks",
+                    "@loader_path/Frameworks",
+                );
+                MACOSX_DEPLOYMENT_TARGET = 26.0;
+                MARKETING_VERSION = 1.0;
+                PRODUCT_BUNDLE_IDENTIFIER = dn.ExampleProjectFileUITests;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+                SUPPORTS_MACCATALYST = NO;
+                SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = "1,2";
+                TEST_TARGET_NAME = ExampleProjectFile;
+            };
+            name = Debug;
+        };
+        5A63FFF52F44E19C00885BD6 /* Release */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                CODE_SIGN_STYLE = Automatic;
+                CURRENT_PROJECT_VERSION = 1;
+                DEVELOPMENT_TEAM = H7LG8SK72M;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_FILE = ExampleProjectFileUITests/Info.plist;
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                LD_RUNPATH_SEARCH_PATHS = (
+                    "$(inherited)",
+                    "@executable_path/Frameworks",
+                    "@loader_path/Frameworks",
+                );
+                MACOSX_DEPLOYMENT_TARGET = 26.0;
+                MARKETING_VERSION = 1.0;
+                PRODUCT_BUNDLE_IDENTIFIER = dn.ExampleProjectFileUITests;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+                SUPPORTS_MACCATALYST = NO;
+                SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+                SWIFT_VERSION = 5.0;
+                TARGETED_DEVICE_FAMILY = "1,2";
+                TEST_TARGET_NAME = ExampleProjectFile;
+            };
+            name = Release;
+        };
+        5A63FFC22F44E19C00885BD6 /* Debug */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+                CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+                CLANG_WARN_SUSPICIOUS_MOVE = YES;
+                CLANG_WARN_UNGUARDED_AVAILABILITY = YES;
+                CODE_SIGN_STYLE = Automatic;
+                DEVELOPMENT_TEAM = H7LG8SK72M;
+                ENABLE_USER_SCRIPT_SANDBOXING = YES;
+                GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+                GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+                GCC_WARN_UNDECLARED_SELECTOR = YES;
+                GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+                GCC_WARN_UNUSED_FUNCTION = YES;
+                GCC_WARN_UNUSED_VARIABLE = YES;
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                MACOSX_DEPLOYMENT_TARGET = 26.0;
+                SWIFT_APPROACHABLE_CONCURRENCY = YES;
+                SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+            };
+            name = Debug;
+        };
+        5A63FFC32F44E19C00885BD6 /* Release */ = {
+            isa = XCBuildConfiguration;
+            buildSettings = {
+                CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+                CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+                CLANG_WARN_SUSPICIOUS_MOVE = YES;
+                CLANG_WARN_UNGUARDED_AVAILABILITY = YES;
+                CODE_SIGN_STYLE = Automatic;
+                DEVELOPMENT_TEAM = H7LG8SK72M;
+                ENABLE_USER_SCRIPT_SANDBOXING = YES;
+                GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+                GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+                GCC_WARN_UNDECLARED_SELECTOR = YES;
+                GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+                GCC_WARN_UNUSED_FUNCTION = YES;
+                GCC_WARN_UNUSED_VARIABLE = YES;
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                MACOSX_DEPLOYMENT_TARGET = 26.0;
+                SWIFT_APPROACHABLE_CONCURRENCY = YES;
+                SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+            };
+            name = Release;
+        };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+        5A63FFC42F44E19C00885BD6 /* Build configuration list for PBXProject "ExampleProjectFile" */ = {
+            isa = XCConfigurationList;
+            buildConfigurations = (
+                5A63FFC22F44E19C00885BD6 /* Debug */,
+                5A63FFC32F44E19C00885BD6 /* Release */,
+            );
+            defaultConfigurationIsVisible = 0;
+            defaultConfigurationName = Release;
+        };
+        5A63FFED2F44E19C00885BD6 /* Build configuration list for PBXNativeTarget "ExampleProjectFile" */ = {
+            isa = XCConfigurationList;
+            buildConfigurations = (
+                5A63FFEE2F44E19C00885BD6 /* Debug */,
+                5A63FFEF2F44E19C00885BD6 /* Release */,
+            );
+            defaultConfigurationIsVisible = 0;
+            defaultConfigurationName = Release;
+        };
+        5A63FFF02F44E19C00885BD6 /* Build configuration list for PBXNativeTarget "ExampleProjectFileTests" */ = {
+            isa = XCConfigurationList;
+            buildConfigurations = (
+                5A63FFF12F44E19C00885BD6 /* Debug */,
+                5A63FFF22F44E19C00885BD6 /* Release */,
+            );
+            defaultConfigurationIsVisible = 0;
+            defaultConfigurationName = Release;
+        };
+        5A63FFF32F44E19C00885BD6 /* Build configuration list for PBXNativeTarget "ExampleProjectFileUITests" */ = {
+            isa = XCConfigurationList;
+            buildConfigurations = (
+                5A63FFF42F44E19C00885BD6 /* Debug */,
+                5A63FFF52F44E19C00885BD6 /* Release */,
+            );
+            defaultConfigurationIsVisible = 0;
+            defaultConfigurationName = Release;
+        };
+/* End XCConfigurationList section */
+    };
+    rootObject = 5A63FFC12F44E19C00885BD6 /* Project object */;
+}
+"""
 
     // MARK: - Errors
 

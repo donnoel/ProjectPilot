@@ -24,7 +24,7 @@ struct LogView: View {
             }
             .background(.thinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .onChange(of: logs.count) { _ in
+            .onChange(of: logs.count) { oldValue, newValue in
                 if let last = logs.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
