@@ -1180,6 +1180,7 @@ Created with **ProjectPilot**.
         let gh = resolvedGHCommandPrefix()
         let repoName = sanitizeRepoName(name)
         let visibilityFlag = createPublicGitHubRepo ? "--public" : "--private"
+        let remoteBranchName = "github"
 
         // Ensure auth is valid (gives clear error early)
         _ = try runInDirectory(projectURL, gh + ["auth", "status"])
@@ -1188,7 +1189,7 @@ Created with **ProjectPilot**.
         // If it already exists, gh will error; we catch and try “set remote + push”.
         do {
             // Use a dedicated remote name for GitHub.
-            _ = try runInDirectory(projectURL, gh + ["repo", "create", repoName, visibilityFlag, "--source=.", "--remote=github", "--push"])
+            _ = try runInDirectory(projectURL, gh + ["repo", "create", repoName, visibilityFlag, "--source=.", "--remote=github"])
         } catch {
             // Fallback: if the repo already exists, wire `github` remote + push.
             // We avoid guessing owner/org; `gh repo view <name>` resolves against your authenticated user.
@@ -1206,8 +1207,11 @@ Created with **ProjectPilot**.
             // Add github remote if missing (or overwrite if it exists).
             _ = try? runInDirectory(projectURL, ["/usr/bin/git", "remote", "remove", "github"])
             _ = try runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "github", sshURL])
-            _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "github", "HEAD"])
         }
+
+        // Local branch stays "main", remote branch is "github".
+        _ = try runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
+        _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "github", "HEAD:\(remoteBranchName)"])
 
         return resolveGitHubRepoURL(repoName: repoName, gh: gh, projectURL: projectURL)
     }
