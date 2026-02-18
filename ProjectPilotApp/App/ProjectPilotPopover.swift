@@ -121,7 +121,6 @@ struct ProjectPilotPopover: View {
     private var advancedSections: some View {
         Group {
             templateSection
-            bundleIDsSection
             presetsSection
             postCreateSection
         }
@@ -205,40 +204,6 @@ struct ProjectPilotPopover: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var bundleIDsSection: some View {
-        section("Bundle IDs") {
-            LabeledContent("iOS") {
-                TextField("com.example.ios", text: $vm.iOSBundleIdentifier)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 280)
-            }
-            .font(.subheadline)
-            if let hint = vm.iOSBundleValidationHint {
-                validationHint(hint, isError: vm.isIOSBundleInvalid)
-            }
-
-            LabeledContent("macOS") {
-                TextField("com.example.macos", text: $vm.macOSBundleIdentifier)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 280)
-            }
-            .font(.subheadline)
-            if let hint = vm.macOSBundleValidationHint {
-                validationHint(hint, isError: vm.isMacOSBundleInvalid)
-            }
-
-            LabeledContent("tvOS") {
-                TextField("com.example.tvos", text: $vm.tvOSBundleIdentifier)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 280)
-            }
-            .font(.subheadline)
-            if let hint = vm.tvOSBundleValidationHint {
-                validationHint(hint, isError: vm.isTVOSBundleInvalid)
-            }
         }
     }
 

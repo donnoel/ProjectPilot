@@ -229,7 +229,7 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     var hasValidationErrors: Bool {
-        isProjectNameInvalid || isIOSBundleInvalid || isMacOSBundleInvalid || isTVOSBundleInvalid
+        isProjectNameInvalid
     }
 
     var availablePresets: [CreationPreset] {
@@ -570,15 +570,6 @@ final class ProjectPilotViewModel: ObservableObject {
         if isProjectNameInvalid {
             return projectNameValidationHint ?? "Enter a valid project name."
         }
-        if isIOSBundleInvalid {
-            return iOSBundleValidationHint ?? "Enter a valid iOS bundle identifier."
-        }
-        if isMacOSBundleInvalid {
-            return macOSBundleValidationHint ?? "Enter a valid macOS bundle identifier."
-        }
-        if isTVOSBundleInvalid {
-            return tvOSBundleValidationHint ?? "Enter a valid tvOS bundle identifier."
-        }
         return nil
     }
 
@@ -788,11 +779,7 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     private func applyBundleIdentifiers(projectName: String, to pbxproj: String) -> String {
-        let fallback = defaultBundleIdentifier(projectName: projectName)
-        let iOS = resolvedBundleIdentifier(iOSBundleIdentifier, fallback: fallback)
-        let macOS = resolvedBundleIdentifier(macOSBundleIdentifier, fallback: fallback)
-        let tvOS = resolvedBundleIdentifier(tvOSBundleIdentifier, fallback: fallback)
-        let base = baseBundleIdentifier(fallback: fallback, iOS: iOS, macOS: macOS, tvOS: tvOS)
+        let base = defaultBundleIdentifier(projectName: projectName)
         let tests = "\(base)Tests"
         let uiTests = "\(base)UITests"
         let baseSettingValue = quotedPbxprojBuildSettingValue(base)
@@ -809,62 +796,11 @@ final class ProjectPilotViewModel: ObservableObject {
         updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName)UITests;",
                                               with: "PRODUCT_BUNDLE_IDENTIFIER = \(uiTestsSettingValue);")
 
-        // App target bundle id (add per-sdk overrides when they differ).
-        let appNeedOverrides = (selectedPlatforms.contains(.iOS) && iOS != base)
-            || (selectedPlatforms.contains(.macOS) && macOS != base)
-            || (selectedPlatforms.contains(.tvOS) && tvOS != base)
-
-        if appNeedOverrides {
-            let replacement = bundleIdentifierBlock(base: base, iOS: iOS, macOS: macOS, tvOS: tvOS)
-            updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = \(baseSettingValue);",
-                                                  with: replacement)
-        }
-
         return updated
     }
 
     private func defaultBundleIdentifier(projectName: String) -> String {
         "dn.\(sanitizeBundleComponent(projectName.lowercased()))"
-    }
-
-    private func resolvedBundleIdentifier(_ value: String, fallback: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? fallback : trimmed
-    }
-
-    private func baseBundleIdentifier(fallback: String, iOS: String, macOS: String, tvOS: String) -> String {
-        if selectedPlatforms.contains(.iOS) {
-            return iOS
-        }
-        if selectedPlatforms.contains(.macOS) {
-            return macOS
-        }
-        if selectedPlatforms.contains(.tvOS) {
-            return tvOS
-        }
-        return fallback
-    }
-
-    private func bundleIdentifierBlock(base: String, iOS: String, macOS: String, tvOS: String) -> String {
-        var lines: [String] = []
-        lines.append("PRODUCT_BUNDLE_IDENTIFIER = \(quotedPbxprojBuildSettingValue(base));")
-
-        if selectedPlatforms.contains(.iOS) {
-            let id = quotedPbxprojBuildSettingValue(iOS)
-            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]\" = \(id);")
-            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]\" = \(id);")
-        }
-        if selectedPlatforms.contains(.tvOS) {
-            let id = quotedPbxprojBuildSettingValue(tvOS)
-            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvos*]\" = \(id);")
-            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvsimulator*]\" = \(id);")
-        }
-        if selectedPlatforms.contains(.macOS) {
-            let id = quotedPbxprojBuildSettingValue(macOS)
-            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]\" = \(id);")
-        }
-
-        return lines.joined(separator: "\n                ")
     }
 
     private func quotedPbxprojBuildSettingValue(_ value: String) -> String {
