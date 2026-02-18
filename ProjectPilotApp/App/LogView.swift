@@ -10,6 +10,7 @@ struct LogView: View {
                     ForEach(logs) { event in
                         HStack(alignment: .top, spacing: 8) {
                             Text(symbol(for: event.level))
+                                .foregroundStyle(symbolColor(for: event.level))
                                 .frame(width: 18, alignment: .leading)
                             Text(event.message)
                                 .font(.caption)
@@ -22,8 +23,29 @@ struct LogView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
             }
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(.white.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        .white.opacity(0.40),
+                                        .white.opacity(0.08)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1
+                            )
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .onChange(of: logs.count) { _, _ in
                 if let last = logs.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
@@ -37,6 +59,14 @@ struct LogView: View {
         case .info: return "•"
         case .success: return "✓"
         case .error: return "!"
+        }
+    }
+
+    private func symbolColor(for level: ProjectPilotViewModel.LogEvent.Level) -> Color {
+        switch level {
+        case .info: return .blue
+        case .success: return .green
+        case .error: return .red
         }
     }
 }

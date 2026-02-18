@@ -88,7 +88,7 @@ A small wrapper around `Process` used to run:
 
 ### **UI (SwiftUI MenuBarExtra)**
 - Compact popover UI
-- Liquid-glass material background
+- Liquid-glass material background with layered card highlights
 - Premium button/pill styling
 
 ---

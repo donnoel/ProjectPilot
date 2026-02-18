@@ -44,6 +44,15 @@ struct ProjectPilotPopover: View {
         HStack(spacing: 10) {
             Image(systemName: "hammer.fill")
                 .symbolRenderingMode(.hierarchical)
+                .padding(6)
+                .background(
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(.white.opacity(0.28), lineWidth: 0.8)
+                        )
+                )
 
             Text("ProjectPilot")
                 .font(.system(size: 15, weight: .semibold))
@@ -84,6 +93,11 @@ struct ProjectPilotPopover: View {
             Circle()
                 .fill(stepColor(for: item.state))
                 .frame(width: 8, height: 8)
+                .overlay(
+                    Circle()
+                        .strokeBorder(.white.opacity(0.45), lineWidth: 0.6)
+                )
+                .shadow(color: stepColor(for: item.state).opacity(0.35), radius: 4, x: 0, y: 2)
             Text(item.step.title)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -171,18 +185,28 @@ struct ProjectPilotPopover: View {
 
     private var githubSection: some View {
         section("GitHub") {
-            Toggle(isOn: $vm.createGitHubRepo) {
-                Text("Create GitHub repo")
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
+            VStack(spacing: 0) {
+                toggleSettingRow(
+                    title: "Create GitHub repo",
+                    subtitle: "Create and push a remote repository after local scaffold succeeds.",
+                    isOn: $vm.createGitHubRepo
+                )
 
-            Toggle(isOn: $vm.createPublicGitHubRepo) {
-                Text("Public repo")
+                Divider().opacity(0.20)
+
+                toggleSettingRow(
+                    title: "Public repo",
+                    subtitle: "When enabled, the created GitHub repository is public.",
+                    isOn: $vm.createPublicGitHubRepo,
+                    isDisabled: !vm.createGitHubRepo
+                )
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .disabled(!vm.createGitHubRepo)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.white.opacity(0.05))
+            )
         }
     }
 
@@ -258,24 +282,36 @@ struct ProjectPilotPopover: View {
 
     private var postCreateSection: some View {
         section("Post-Create") {
-            Toggle(isOn: $vm.openInXcodeAfterCreate) {
-                Text("Open in Xcode")
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
+            VStack(spacing: 0) {
+                toggleSettingRow(
+                    title: "Open in Xcode",
+                    subtitle: "Launch the generated project as soon as creation completes.",
+                    isOn: $vm.openInXcodeAfterCreate
+                )
 
-            Toggle(isOn: $vm.revealInFinderAfterCreate) {
-                Text("Reveal in Finder")
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
+                Divider().opacity(0.20)
 
-            Toggle(isOn: $vm.copyRepoURLAfterCreate) {
-                Text("Copy repo URL")
+                toggleSettingRow(
+                    title: "Reveal in Finder",
+                    subtitle: "Open the project folder in Finder after create.",
+                    isOn: $vm.revealInFinderAfterCreate
+                )
+
+                Divider().opacity(0.20)
+
+                toggleSettingRow(
+                    title: "Copy repo URL",
+                    subtitle: "Copy the GitHub repository URL when remote setup is available.",
+                    isOn: $vm.copyRepoURLAfterCreate,
+                    isDisabled: !vm.createGitHubRepo && !vm.canRetryGitHub
+                )
             }
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .disabled(!vm.createGitHubRepo && !vm.canRetryGitHub)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.white.opacity(0.05))
+            )
         }
     }
 
@@ -342,12 +378,7 @@ struct ProjectPilotPopover: View {
                 .foregroundStyle(.secondary)
         }
         .padding(10)
-        .background(.thinMaterial)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.05), shadowOpacity: 0.08)
     }
 
     private var successCard: some View {
@@ -385,12 +416,7 @@ struct ProjectPilotPopover: View {
             }
         }
         .padding(10)
-        .background(Color.green.opacity(0.10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.green.opacity(0.28), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .liquidGlassCard(cornerRadius: 12, tint: .green.opacity(0.14), shadowOpacity: 0.08)
     }
 
     private func statusPill(_ status: ProjectPilotViewModel.StatusLine) -> some View {
@@ -420,12 +446,7 @@ struct ProjectPilotPopover: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.thinMaterial)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.white.opacity(0.10), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .liquidGlassCard(cornerRadius: 12, tint: statusColor(status.level).opacity(0.08), shadowOpacity: 0.08)
     }
 
     private func statusColor(_ level: ProjectPilotViewModel.StatusLevel) -> Color {
@@ -441,6 +462,34 @@ struct ProjectPilotPopover: View {
             .font(.caption2)
             .foregroundStyle(isError ? .red : .secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func toggleSettingRow(
+        title: String,
+        subtitle: String,
+        isOn: Binding<Bool>,
+        isDisabled: Bool = false
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 10)
+
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        }
+        .padding(.vertical, 7)
+        .disabled(isDisabled)
     }
 
     private var actions: some View {
@@ -489,12 +538,7 @@ struct ProjectPilotPopover: View {
             content()
         }
         .padding(12)
-        .background(.thinMaterial)
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .liquidGlassCard(cornerRadius: 14, tint: .accentColor.opacity(0.05))
     }
 
     private func platformToggle(_ platform: ProjectPilotViewModel.Platform, systemImage: String) -> some View {
@@ -522,12 +566,122 @@ struct ProjectPilotPopover: View {
 
 private struct GlassBackground: View {
     var body: some View {
-        VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+        ZStack {
+            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+
+            LinearGradient(
+                colors: [
+                    .white.opacity(0.24),
+                    .white.opacity(0.06),
+                    .clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .blendMode(.screen)
+
+            RadialGradient(
+                colors: [
+                    .white.opacity(0.18),
+                    .clear
+                ],
+                center: .topLeading,
+                startRadius: 0,
+                endRadius: 180
+            )
+            .offset(x: -40, y: -30)
+
+            RadialGradient(
+                colors: [
+                    .accentColor.opacity(0.16),
+                    .clear
+                ],
+                center: .bottomTrailing,
+                startRadius: 0,
+                endRadius: 220
+            )
+            .offset(x: 40, y: 40)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            .white.opacity(0.42),
+                            .white.opacity(0.10)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+private struct LiquidGlassCardModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    let tint: Color
+    let shadowOpacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(tint)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        .white.opacity(0.30),
+                                        .white.opacity(0.10),
+                                        .clear
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .blendMode(.plusLighter)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        .white.opacity(0.44),
+                                        .white.opacity(0.08)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1
+                            )
+                    )
+                    .shadow(color: .black.opacity(shadowOpacity), radius: 10, x: 0, y: 5)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+}
+
+private extension View {
+    func liquidGlassCard(
+        cornerRadius: CGFloat,
+        tint: Color = .white.opacity(0.04),
+        shadowOpacity: Double = 0.12
+    ) -> some View {
+        modifier(
+            LiquidGlassCardModifier(
+                cornerRadius: cornerRadius,
+                tint: tint,
+                shadowOpacity: shadowOpacity
+            )
+        )
     }
 }
 
