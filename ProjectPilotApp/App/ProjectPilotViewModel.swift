@@ -1209,8 +1209,8 @@ This repo is an Apple-platform app codebase. You are an engineering agent (Codex
 - **SwiftUI + MVVM.** Keep UI declarative; isolate logic in view models/services.
 - **Concurrency correctness.** Avoid broad `@MainActor` on data models / filesystem / networking types. Use actors/services for isolation.
 - **File persistence must be safe.** Use atomic writes where appropriate.
-- **Privacy-first.** Local-first by default. No unexpected network calls.
-- **Preserve pipeline contracts.** Do not regress scaffold flow, retry behavior, or status visibility without explicitly calling it out.
+- **Privacy-first.** No unexpected network calls.
+- **Preserve core behavior contracts.** Do not regress existing user-visible flows without explicitly calling it out.
 
 ## Workflow
 1. Read existing code and architecture before editing.
@@ -1238,7 +1238,8 @@ This repo is an Apple-platform app codebase. You are an engineering agent (Codex
 - Don't "fix" code by disabling concurrency checks.
 - Don't add `@MainActor` broadly to silence warnings.
 - Don't change public behavior without stating it.
-- Don't hide command failures; surface actionable status and retry paths.
+- Don't hide failures; surface actionable status and retry paths.
+- Don't replace plain-language setup guidance with unnecessary jargon.
 
 If something is ambiguous, default to the simplest solution that preserves correctness and forward progress.
 """
