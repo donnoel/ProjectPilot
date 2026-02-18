@@ -298,13 +298,20 @@ final class ProjectPilotViewModel: ObservableObject {
         setStatus(.success, "Copied project path.")
     }
 
-    func applySelectedPreset() {
+    func selectPresetFromPicker(_ presetID: String) {
+        selectedPresetID = presetID
+        applySelectedPreset(showStatus: false)
+    }
+
+    func applySelectedPreset(showStatus: Bool = true) {
         guard let preset = preset(withID: selectedPresetID) else {
             setStatus(.error, "Choose a valid preset before applying.")
             return
         }
         applyPreset(preset)
-        setStatus(.success, "Applied preset: \(preset.name)")
+        if showStatus {
+            setStatus(.success, "Applied preset: \(preset.name)")
+        }
     }
 
     func saveCurrentAsPreset() {
@@ -1948,6 +1955,7 @@ Created with **ProjectPilot**.
                 CURRENT_PROJECT_VERSION = 1;
                 DEVELOPMENT_TEAM = H7LG8SK72M;
                 ENABLE_APP_SANDBOX = YES;
+                ENABLE_APP_INTENTS_METADATA_GENERATION = NO;
                 ENABLE_HARDENED_RUNTIME = YES;
                 ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
                 ENABLE_PREVIEWS = YES;
@@ -1992,6 +2000,7 @@ Created with **ProjectPilot**.
                 CURRENT_PROJECT_VERSION = 1;
                 DEVELOPMENT_TEAM = H7LG8SK72M;
                 ENABLE_APP_SANDBOX = YES;
+                ENABLE_APP_INTENTS_METADATA_GENERATION = NO;
                 ENABLE_HARDENED_RUNTIME = YES;
                 ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
                 ENABLE_PREVIEWS = YES;
@@ -2034,6 +2043,7 @@ Created with **ProjectPilot**.
                 CURRENT_PROJECT_VERSION = 1;
                 DEVELOPMENT_TEAM = H7LG8SK72M;
                 GENERATE_INFOPLIST_FILE = YES;
+                ENABLE_APP_INTENTS_METADATA_GENERATION = NO;
                 INFOPLIST_FILE = ExampleProjectFileTests/Info.plist;
                 IPHONEOS_DEPLOYMENT_TARGET = 26.0;
                 LD_RUNPATH_SEARCH_PATHS = (
@@ -2063,6 +2073,7 @@ Created with **ProjectPilot**.
                 CURRENT_PROJECT_VERSION = 1;
                 DEVELOPMENT_TEAM = H7LG8SK72M;
                 GENERATE_INFOPLIST_FILE = YES;
+                ENABLE_APP_INTENTS_METADATA_GENERATION = NO;
                 INFOPLIST_FILE = ExampleProjectFileTests/Info.plist;
                 IPHONEOS_DEPLOYMENT_TARGET = 26.0;
                 LD_RUNPATH_SEARCH_PATHS = (
@@ -2091,6 +2102,7 @@ Created with **ProjectPilot**.
                 CURRENT_PROJECT_VERSION = 1;
                 DEVELOPMENT_TEAM = H7LG8SK72M;
                 GENERATE_INFOPLIST_FILE = YES;
+                ENABLE_APP_INTENTS_METADATA_GENERATION = NO;
                 INFOPLIST_FILE = ExampleProjectFileUITests/Info.plist;
                 IPHONEOS_DEPLOYMENT_TARGET = 26.0;
                 LD_RUNPATH_SEARCH_PATHS = (
@@ -2119,6 +2131,7 @@ Created with **ProjectPilot**.
                 CURRENT_PROJECT_VERSION = 1;
                 DEVELOPMENT_TEAM = H7LG8SK72M;
                 GENERATE_INFOPLIST_FILE = YES;
+                ENABLE_APP_INTENTS_METADATA_GENERATION = NO;
                 INFOPLIST_FILE = ExampleProjectFileUITests/Info.plist;
                 IPHONEOS_DEPLOYMENT_TARGET = 26.0;
                 LD_RUNPATH_SEARCH_PATHS = (

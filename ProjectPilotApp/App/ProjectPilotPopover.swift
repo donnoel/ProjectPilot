@@ -245,7 +245,13 @@ struct ProjectPilotPopover: View {
     private var presetsSection: some View {
         section("Presets") {
             LabeledContent("Preset") {
-                Picker("Preset", selection: $vm.selectedPresetID) {
+                Picker(
+                    "Preset",
+                    selection: Binding(
+                        get: { vm.selectedPresetID },
+                        set: { vm.selectPresetFromPicker($0) }
+                    )
+                ) {
                     ForEach(vm.availablePresets) { preset in
                         Text(preset.name).tag(preset.id)
                     }
