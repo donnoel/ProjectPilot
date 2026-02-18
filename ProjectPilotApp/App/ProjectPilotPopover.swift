@@ -54,7 +54,7 @@ struct ProjectPilotPopover: View {
                         )
                 )
 
-            Text("ProjectPilot")
+            Text("Project Pilot")
                 .font(.system(size: 15, weight: .semibold))
                 .lineLimit(1)
 
