@@ -45,6 +45,8 @@ It can also:
 - **Platforms**: Tap the platform “pills” to select iOS/macOS/tvOS.
 - **GitHub**
   - Toggle **Public repo** on/off.
+- **Post-Create**
+  - Optionally open in Xcode, reveal in Finder, and open Safari to the GitHub project.
 - **Create**: Generates the project, bootstraps git, creates/pushes GitHub repo (if enabled), then opens in Xcode.
 - **Quit**: Terminates ProjectPilot.
 

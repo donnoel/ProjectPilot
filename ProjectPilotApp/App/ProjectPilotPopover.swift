@@ -340,9 +340,9 @@ struct ProjectPilotPopover: View {
                 Divider().opacity(0.20)
 
                 toggleSettingRow(
-                    title: "Copy repo URL",
-                    subtitle: "Copy the GitHub repository URL when remote setup is available.",
-                    isOn: $vm.copyRepoURLAfterCreate,
+                    title: "Open Safari to repo",
+                    subtitle: "Open the GitHub project page in Safari when remote setup is available.",
+                    isOn: $vm.openGitHubRepoInSafariAfterCreate,
                     isDisabled: !vm.createGitHubRepo && !vm.canRetryGitHub
                 )
             }

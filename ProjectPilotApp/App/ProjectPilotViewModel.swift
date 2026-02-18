@@ -128,7 +128,7 @@ final class ProjectPilotViewModel: ObservableObject {
     /// Post-create checklist options.
     @Published var openInXcodeAfterCreate: Bool = true { didSet { persistPostCreateSettings() } }
     @Published var revealInFinderAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
-    @Published var copyRepoURLAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
+    @Published var openGitHubRepoInSafariAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
 
     @Published private(set) var lastCreatedGitHubRepoURL: String? = nil
 
@@ -367,15 +367,6 @@ final class ProjectPilotViewModel: ObservableObject {
         }
     }
 
-    func copyLastRepoURLToClipboard() {
-        guard let repoURL = lastCreatedGitHubRepoURL, !repoURL.isEmpty else {
-            setStatus(.error, "No repo URL available to copy.")
-            return
-        }
-        copyToClipboard(repoURL)
-        setStatus(.success, "Copied repo URL.")
-    }
-
     // MARK: - Pipeline
 
     private func createProjectSkeletonAsync() async {
@@ -461,8 +452,8 @@ final class ProjectPilotViewModel: ObservableObject {
             if revealInFinderAfterCreate {
                 try revealInFinder(projectURL: projectURL)
             }
-            if copyRepoURLAfterCreate, let repoURL = repoURLForChecklist, !repoURL.isEmpty {
-                copyToClipboard(repoURL)
+            if openGitHubRepoInSafariAfterCreate, let repoURL = repoURLForChecklist, !repoURL.isEmpty {
+                try openGitHubRepoInSafari(repoURL)
             }
 
             if let gitHubErrorMessage {
@@ -533,6 +524,7 @@ final class ProjectPilotViewModel: ObservableObject {
         isRunning = true
         defer { isRunning = false }
 
+        var failureContext = "GitHub retry"
         do {
             hasFailureDetails = false
             try runPipelineStep(.github, statusMessage: "Retrying GitHub repo setup…") {
@@ -540,8 +532,9 @@ final class ProjectPilotViewModel: ObservableObject {
             }
             clearPendingGitHubRetry()
 
-            if copyRepoURLAfterCreate, let repoURL = lastCreatedGitHubRepoURL, !repoURL.isEmpty {
-                copyToClipboard(repoURL)
+            if openGitHubRepoInSafariAfterCreate, let repoURL = lastCreatedGitHubRepoURL, !repoURL.isEmpty {
+                failureContext = "Opening Safari"
+                try openGitHubRepoInSafari(repoURL)
             }
 
             appendDetailLog(.success, "GitHub retry succeeded.")
@@ -549,8 +542,13 @@ final class ProjectPilotViewModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 900_000_000)
             clearStatus()
         } catch {
-            appendDetailLog(.error, "GitHub retry failed: \(error.localizedDescription)")
-            setStatus(.error, "GitHub retry failed: \(error.localizedDescription)")
+            if failureContext == "GitHub retry" {
+                appendDetailLog(.error, "GitHub retry failed: \(error.localizedDescription)")
+                setStatus(.error, "GitHub retry failed: \(error.localizedDescription)")
+            } else {
+                appendDetailLog(.error, "\(failureContext) failed: \(error.localizedDescription)")
+                setStatus(.error, "\(failureContext) failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1365,6 +1363,15 @@ Provide:
         _ = try run(["/usr/bin/open", "-R", projectURL.path])
     }
 
+    private func openGitHubRepoInSafari(_ repoURL: String) throws {
+        guard let parsedURL = URL(string: repoURL),
+              let scheme = parsedURL.scheme,
+              !scheme.isEmpty else {
+            throw PPError("Invalid GitHub URL: \(repoURL)")
+        }
+        _ = try run(["/usr/bin/open", "-a", "Safari", parsedURL.absoluteString])
+    }
+
     // MARK: - Process helpers
 
     private func resolveXcodeGen() throws -> String {
@@ -1567,8 +1574,8 @@ Provide:
         if defaults.object(forKey: Self.StorageKey.revealInFinderAfterCreate) != nil {
             revealInFinderAfterCreate = defaults.bool(forKey: Self.StorageKey.revealInFinderAfterCreate)
         }
-        if defaults.object(forKey: Self.StorageKey.copyRepoURLAfterCreate) != nil {
-            copyRepoURLAfterCreate = defaults.bool(forKey: Self.StorageKey.copyRepoURLAfterCreate)
+        if defaults.object(forKey: Self.StorageKey.openGitHubRepoInSafariAfterCreate) != nil {
+            openGitHubRepoInSafariAfterCreate = defaults.bool(forKey: Self.StorageKey.openGitHubRepoInSafariAfterCreate)
         }
 
         if let data = defaults.data(forKey: Self.StorageKey.customPresets),
@@ -1616,7 +1623,7 @@ Provide:
         let defaults = UserDefaults.standard
         defaults.set(openInXcodeAfterCreate, forKey: Self.StorageKey.openInXcodeAfterCreate)
         defaults.set(revealInFinderAfterCreate, forKey: Self.StorageKey.revealInFinderAfterCreate)
-        defaults.set(copyRepoURLAfterCreate, forKey: Self.StorageKey.copyRepoURLAfterCreate)
+        defaults.set(openGitHubRepoInSafariAfterCreate, forKey: Self.StorageKey.openGitHubRepoInSafariAfterCreate)
     }
 
     private func persistCustomPresets() {
@@ -1642,7 +1649,7 @@ Provide:
         static let createPublicGitHubRepo = "projectPilot.createPublicGitHubRepo"
         static let openInXcodeAfterCreate = "projectPilot.openInXcodeAfterCreate"
         static let revealInFinderAfterCreate = "projectPilot.revealInFinderAfterCreate"
-        static let copyRepoURLAfterCreate = "projectPilot.copyRepoURLAfterCreate"
+        static let openGitHubRepoInSafariAfterCreate = "projectPilot.openGitHubRepoInSafariAfterCreate"
         static let customPresets = "projectPilot.customPresets"
         static let selectedPresetID = "projectPilot.selectedPresetID"
     }
