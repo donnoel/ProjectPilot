@@ -787,16 +787,19 @@ final class ProjectPilotViewModel: ObservableObject {
         let base = baseBundleIdentifier(projectName: projectName)
         let tests = "\(base)Tests"
         let uiTests = "\(base)UITests"
+        let baseSettingValue = quotedPbxprojBuildSettingValue(base)
+        let testsSettingValue = quotedPbxprojBuildSettingValue(tests)
+        let uiTestsSettingValue = quotedPbxprojBuildSettingValue(uiTests)
 
         var updated = pbxproj
 
         // First, replace template defaults.
         updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName);",
-                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(base);")
+                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(baseSettingValue);")
         updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName)Tests;",
-                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(tests);")
+                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(testsSettingValue);")
         updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName)UITests;",
-                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(uiTests);")
+                                              with: "PRODUCT_BUNDLE_IDENTIFIER = \(uiTestsSettingValue);")
 
         // App target bundle id (add per-sdk overrides when they differ).
         let appNeedOverrides = (selectedPlatforms.contains(.iOS) && iOSBundleIdentifier != base)
@@ -805,7 +808,7 @@ final class ProjectPilotViewModel: ObservableObject {
 
         if appNeedOverrides {
             let replacement = bundleIdentifierBlock(base: base)
-            updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = \(base);",
+            updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = \(baseSettingValue);",
                                                   with: replacement)
         }
 
@@ -828,24 +831,31 @@ final class ProjectPilotViewModel: ObservableObject {
 
     private func bundleIdentifierBlock(base: String) -> String {
         var lines: [String] = []
-        lines.append("PRODUCT_BUNDLE_IDENTIFIER = \(base);")
+        lines.append("PRODUCT_BUNDLE_IDENTIFIER = \(quotedPbxprojBuildSettingValue(base));")
 
         if selectedPlatforms.contains(.iOS) {
-            let id = iOSBundleIdentifier
-            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*] = \(id);")
-            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*] = \(id);")
+            let id = quotedPbxprojBuildSettingValue(iOSBundleIdentifier)
+            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]\" = \(id);")
+            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]\" = \(id);")
         }
         if selectedPlatforms.contains(.tvOS) {
-            let id = tvOSBundleIdentifier
-            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvos*] = \(id);")
-            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvsimulator*] = \(id);")
+            let id = quotedPbxprojBuildSettingValue(tvOSBundleIdentifier)
+            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvos*]\" = \(id);")
+            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvsimulator*]\" = \(id);")
         }
         if selectedPlatforms.contains(.macOS) {
-            let id = macOSBundleIdentifier
-            lines.append("PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*] = \(id);")
+            let id = quotedPbxprojBuildSettingValue(macOSBundleIdentifier)
+            lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]\" = \(id);")
         }
 
         return lines.joined(separator: "\n                ")
+    }
+
+    private func quotedPbxprojBuildSettingValue(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
     }
 
     private func writeIfMissing(url: URL, contents: String) throws {
