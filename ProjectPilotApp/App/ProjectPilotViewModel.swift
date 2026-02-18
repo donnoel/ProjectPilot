@@ -185,6 +185,9 @@ final class ProjectPilotViewModel: ObservableObject {
         if trimmed.isEmpty {
             return "Project name is required."
         }
+        if !containsAlphanumeric(trimmed) {
+            return "Use at least one letter or number."
+        }
 
         let typeName = sanitizeTypeName(trimmed)
         if !isValidSwiftTypeName(typeName) {
@@ -201,6 +204,7 @@ final class ProjectPilotViewModel: ObservableObject {
     var isProjectNameInvalid: Bool {
         let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
+        guard containsAlphanumeric(trimmed) else { return true }
         return !isValidSwiftTypeName(sanitizeTypeName(trimmed))
     }
 
@@ -626,6 +630,10 @@ final class ProjectPilotViewModel: ObservableObject {
         return value.unicodeScalars.allSatisfy { validRest.contains($0) }
     }
 
+    private func containsAlphanumeric(_ value: String) -> Bool {
+        value.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
+    }
+
     private func bundleValidationHint(value: String, platform: Platform) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
@@ -754,7 +762,7 @@ final class ProjectPilotViewModel: ObservableObject {
             .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
     }
 
-    private func applySupportedPlatforms(to pbxproj: String) -> String {
+    func supportedPlatformsBuildSettingValue() -> String {
         // Template default: "iphoneos iphonesimulator macosx".
         var platforms: [String] = []
 
@@ -773,7 +781,11 @@ final class ProjectPilotViewModel: ObservableObject {
             platforms = ["macosx"]
         }
 
-        let joined = platforms.joined(separator: " ")
+        return platforms.joined(separator: " ")
+    }
+
+    private func applySupportedPlatforms(to pbxproj: String) -> String {
+        let joined = supportedPlatformsBuildSettingValue()
         return pbxproj.replacingOccurrences(of: "SUPPORTED_PLATFORMS = \"iphoneos iphonesimulator macosx\";",
                                             with: "SUPPORTED_PLATFORMS = \"\(joined)\";")
     }

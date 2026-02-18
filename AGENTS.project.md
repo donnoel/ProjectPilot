@@ -16,7 +16,7 @@ We have a robust scaffold pipeline with quality-of-life UX:
 6) Presets are supported (built-in + custom) and can store platforms, template profile, and GitHub visibility defaults.
 7) Template profiles are supported so users can scaffold from multiple golden starter variants.
 8) Post-create checklist actions include open in Xcode, reveal in Finder, and copy repo URL/path.
-9) Inline validation hints appear before Create for project name.
+9) Inline validation hints appear before Create for project name (including requiring at least one letter or number).
 10) Creation progress is visible with a compact step timeline (Folder → Xcodeproj → Git → GitHub → Open).
 11) Failure diagnostics include an expandable details log panel with copy-to-clipboard support.
 12) The popover separates **Basic** vs **Advanced** sections and supports keyboard-first flows (Enter create, Cmd+R retry, Esc clear status).
