@@ -381,8 +381,6 @@ final class ProjectPilotViewModel: ObservableObject {
             return
         }
 
-        // Ensure default platform settings exist before generation.
-        populatePlatformDefaultsIfNeeded(projectName: name)
         let templateProfile = selectedTemplateProfile
 
         let rootURL = projectRootURL.standardizedFileURL
@@ -749,20 +747,6 @@ final class ProjectPilotViewModel: ObservableObject {
         try workspaceContents.write(to: workspaceContentsURL, atomically: true, encoding: .utf8)
     }
 
-    private func populatePlatformDefaultsIfNeeded(projectName: String) {
-        let base = "dn.\(sanitizeBundleComponent(projectName.lowercased()))"
-
-        if iOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            iOSBundleIdentifier = base
-        }
-        if macOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            macOSBundleIdentifier = base
-        }
-        if tvOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            tvOSBundleIdentifier = base
-        }
-    }
-
     private func sanitizeBundleComponent(_ value: String) -> String {
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789.-")
         var out = ""
@@ -804,7 +788,11 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     private func applyBundleIdentifiers(projectName: String, to pbxproj: String) -> String {
-        let base = baseBundleIdentifier(projectName: projectName)
+        let fallback = defaultBundleIdentifier(projectName: projectName)
+        let iOS = resolvedBundleIdentifier(iOSBundleIdentifier, fallback: fallback)
+        let macOS = resolvedBundleIdentifier(macOSBundleIdentifier, fallback: fallback)
+        let tvOS = resolvedBundleIdentifier(tvOSBundleIdentifier, fallback: fallback)
+        let base = baseBundleIdentifier(fallback: fallback, iOS: iOS, macOS: macOS, tvOS: tvOS)
         let tests = "\(base)Tests"
         let uiTests = "\(base)UITests"
         let baseSettingValue = quotedPbxprojBuildSettingValue(base)
@@ -822,12 +810,12 @@ final class ProjectPilotViewModel: ObservableObject {
                                               with: "PRODUCT_BUNDLE_IDENTIFIER = \(uiTestsSettingValue);")
 
         // App target bundle id (add per-sdk overrides when they differ).
-        let appNeedOverrides = (selectedPlatforms.contains(.iOS) && iOSBundleIdentifier != base)
-            || (selectedPlatforms.contains(.macOS) && macOSBundleIdentifier != base)
-            || (selectedPlatforms.contains(.tvOS) && tvOSBundleIdentifier != base)
+        let appNeedOverrides = (selectedPlatforms.contains(.iOS) && iOS != base)
+            || (selectedPlatforms.contains(.macOS) && macOS != base)
+            || (selectedPlatforms.contains(.tvOS) && tvOS != base)
 
         if appNeedOverrides {
-            let replacement = bundleIdentifierBlock(base: base)
+            let replacement = bundleIdentifierBlock(base: base, iOS: iOS, macOS: macOS, tvOS: tvOS)
             updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = \(baseSettingValue);",
                                                   with: replacement)
         }
@@ -835,36 +823,44 @@ final class ProjectPilotViewModel: ObservableObject {
         return updated
     }
 
-    private func baseBundleIdentifier(projectName: String) -> String {
-        let fallback = "dn.\(sanitizeBundleComponent(projectName.lowercased()))"
+    private func defaultBundleIdentifier(projectName: String) -> String {
+        "dn.\(sanitizeBundleComponent(projectName.lowercased()))"
+    }
+
+    private func resolvedBundleIdentifier(_ value: String, fallback: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? fallback : trimmed
+    }
+
+    private func baseBundleIdentifier(fallback: String, iOS: String, macOS: String, tvOS: String) -> String {
         if selectedPlatforms.contains(.iOS) {
-            return iOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : iOSBundleIdentifier
+            return iOS
         }
         if selectedPlatforms.contains(.macOS) {
-            return macOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : macOSBundleIdentifier
+            return macOS
         }
         if selectedPlatforms.contains(.tvOS) {
-            return tvOSBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : tvOSBundleIdentifier
+            return tvOS
         }
         return fallback
     }
 
-    private func bundleIdentifierBlock(base: String) -> String {
+    private func bundleIdentifierBlock(base: String, iOS: String, macOS: String, tvOS: String) -> String {
         var lines: [String] = []
         lines.append("PRODUCT_BUNDLE_IDENTIFIER = \(quotedPbxprojBuildSettingValue(base));")
 
         if selectedPlatforms.contains(.iOS) {
-            let id = quotedPbxprojBuildSettingValue(iOSBundleIdentifier)
+            let id = quotedPbxprojBuildSettingValue(iOS)
             lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphoneos*]\" = \(id);")
             lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=iphonesimulator*]\" = \(id);")
         }
         if selectedPlatforms.contains(.tvOS) {
-            let id = quotedPbxprojBuildSettingValue(tvOSBundleIdentifier)
+            let id = quotedPbxprojBuildSettingValue(tvOS)
             lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvos*]\" = \(id);")
             lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=appletvsimulator*]\" = \(id);")
         }
         if selectedPlatforms.contains(.macOS) {
-            let id = quotedPbxprojBuildSettingValue(macOSBundleIdentifier)
+            let id = quotedPbxprojBuildSettingValue(macOS)
             lines.append("\"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]\" = \(id);")
         }
 
@@ -1603,9 +1599,7 @@ Provide:
             }
         }
 
-        iOSBundleIdentifier = defaults.string(forKey: Self.StorageKey.iOSBundleIdentifier) ?? iOSBundleIdentifier
-        macOSBundleIdentifier = defaults.string(forKey: Self.StorageKey.macOSBundleIdentifier) ?? macOSBundleIdentifier
-        tvOSBundleIdentifier = defaults.string(forKey: Self.StorageKey.tvOSBundleIdentifier) ?? tvOSBundleIdentifier
+        clearLegacyPersistedBundleIdentifiers(defaults: defaults)
 
         if let rawProfile = defaults.string(forKey: Self.StorageKey.templateProfile),
            let profile = TemplateProfile(rawValue: rawProfile) {
@@ -1651,10 +1645,13 @@ Provide:
     }
 
     private func persistBundleIdentifiers() {
-        let defaults = UserDefaults.standard
-        defaults.set(iOSBundleIdentifier, forKey: Self.StorageKey.iOSBundleIdentifier)
-        defaults.set(macOSBundleIdentifier, forKey: Self.StorageKey.macOSBundleIdentifier)
-        defaults.set(tvOSBundleIdentifier, forKey: Self.StorageKey.tvOSBundleIdentifier)
+        // Bundle IDs are per-scaffold inputs and intentionally not persisted globally.
+    }
+
+    private func clearLegacyPersistedBundleIdentifiers(defaults: UserDefaults) {
+        defaults.removeObject(forKey: Self.StorageKey.iOSBundleIdentifier)
+        defaults.removeObject(forKey: Self.StorageKey.macOSBundleIdentifier)
+        defaults.removeObject(forKey: Self.StorageKey.tvOSBundleIdentifier)
     }
 
     private func persistTemplateProfile() {
