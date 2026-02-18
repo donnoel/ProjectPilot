@@ -1,13 +1,84 @@
 import Combine
 import Foundation
+import AppKit
 
 @MainActor
 final class ProjectPilotViewModel: ObservableObject {
-    enum Platform: String, CaseIterable, Identifiable {
+    enum Platform: String, CaseIterable, Identifiable, Codable {
         case iOS, macOS, tvOS
         var id: String { rawValue }
 
         var folderName: String { rawValue }
+    }
+
+    enum TemplateProfile: String, CaseIterable, Identifiable, Codable {
+        case starterApp
+        case dashboardApp
+        case utilityTool
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .starterApp: return "Starter App"
+            case .dashboardApp: return "Dashboard App"
+            case .utilityTool: return "Utility Tool"
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .starterApp: return "Clean SwiftUI starter with basic project structure."
+            case .dashboardApp: return "Navigation-based starter with overview and tasks sections."
+            case .utilityTool: return "Compact utility-style starter aimed at productivity tools."
+            }
+        }
+    }
+
+    struct CreationPreset: Identifiable, Codable, Hashable {
+        let id: String
+        var name: String
+        var templateProfile: TemplateProfile
+        var platforms: Set<Platform>
+        var iOSBundleIdentifier: String
+        var macOSBundleIdentifier: String
+        var tvOSBundleIdentifier: String
+        var createGitHubRepo: Bool
+        var createPublicGitHubRepo: Bool
+    }
+
+    enum PipelineStep: String, CaseIterable, Identifiable {
+        case folder
+        case xcodeproj
+        case git
+        case github
+        case open
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .folder: return "Folder"
+            case .xcodeproj: return "Xcodeproj"
+            case .git: return "Git"
+            case .github: return "GitHub"
+            case .open: return "Open"
+            }
+        }
+    }
+
+    enum PipelineStepState: Equatable {
+        case pending
+        case inProgress
+        case success
+        case skipped
+        case failure
+    }
+
+    struct PipelineProgressItem: Identifiable, Equatable {
+        let step: PipelineStep
+        let state: PipelineStepState
+        var id: PipelineStep { step }
     }
 
     enum StatusLevel: Equatable {
@@ -22,21 +93,156 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     @Published var projectName: String = ""
-    @Published var selectedPlatforms: Set<Platform> = [.iOS]
+    @Published var selectedPlatforms: Set<Platform> = [.iOS] {
+        didSet {
+            if selectedPlatforms.isEmpty {
+                selectedPlatforms = [.macOS]
+            }
+            persistSelectedPlatforms()
+        }
+    }
 
     // Platform-specific settings (applied into the generated Xcode project).
-    @Published var iOSBundleIdentifier: String = ""
-    @Published var macOSBundleIdentifier: String = ""
-    @Published var tvOSBundleIdentifier: String = ""
+    @Published var iOSBundleIdentifier: String = "" { didSet { persistBundleIdentifiers() } }
+    @Published var macOSBundleIdentifier: String = "" { didSet { persistBundleIdentifiers() } }
+    @Published var tvOSBundleIdentifier: String = "" { didSet { persistBundleIdentifiers() } }
+
+    @Published var selectedTemplateProfile: TemplateProfile = .starterApp {
+        didSet { persistTemplateProfile() }
+    }
 
     @Published var statusLine: StatusLine? = nil
     @Published var isRunning: Bool = false
 
-    /// If enabled, `gh repo create` will create a public repository. Default is private.
-    @Published var createPublicGitHubRepo: Bool = false
+    /// If enabled, create and push a remote GitHub repository. If disabled, keep setup local only.
+    @Published var createGitHubRepo: Bool = true { didSet { persistGitHubSettings() } }
 
-    // Your hard-coded root.
-    private let developmentRootURL = URL(fileURLWithPath: "/Users/donnoel/Development", isDirectory: true)
+    /// If enabled, `gh repo create` will create a public repository. Default is private.
+    @Published var createPublicGitHubRepo: Bool = false { didSet { persistGitHubSettings() } }
+
+    /// Root directory where new projects are created.
+    @Published var projectRootURL: URL = ProjectPilotViewModel.defaultProjectRootURL() {
+        didSet { persistProjectRootURL() }
+    }
+
+    /// Post-create checklist options.
+    @Published var openInXcodeAfterCreate: Bool = true { didSet { persistPostCreateSettings() } }
+    @Published var revealInFinderAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
+    @Published var copyRepoURLAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
+
+    @Published private(set) var lastCreatedGitHubRepoURL: String? = nil
+
+    @Published private(set) var customPresets: [CreationPreset] = [] {
+        didSet { persistCustomPresets() }
+    }
+    @Published var selectedPresetID: String = ProjectPilotViewModel.defaultPresetID {
+        didSet { persistSelectedPresetID() }
+    }
+    @Published var newPresetName: String = ""
+
+    @Published private(set) var pendingGitHubRetryName: String? = nil
+    @Published private(set) var pendingGitHubRetryPath: String? = nil
+
+    @Published var isDetailsExpanded: Bool = false
+    @Published private(set) var detailLogs: [LogEvent] = []
+    @Published private(set) var hasFailureDetails: Bool = false
+    @Published private(set) var pipelineStepStates: [PipelineStep: PipelineStepState] = ProjectPilotViewModel.defaultPipelineStepStates()
+    @Published private(set) var lastCreatedProjectURL: URL? = nil
+
+    var canRetryGitHub: Bool {
+        pendingGitHubRetryName != nil && pendingGitHubRetryPath != nil
+    }
+
+    var pipelineProgressItems: [PipelineProgressItem] {
+        PipelineStep.allCases.map { step in
+            PipelineProgressItem(step: step, state: pipelineStepStates[step] ?? .pending)
+        }
+    }
+
+    var shouldShowDetailsPanel: Bool {
+        hasFailureDetails || isDetailsExpanded || statusLine?.level == .error
+    }
+
+    var hasDetailLogs: Bool {
+        !detailLogs.isEmpty
+    }
+
+    var shouldShowSuccessCard: Bool {
+        lastCreatedProjectURL != nil
+    }
+
+    var lastCreatedProjectPathDisplay: String {
+        guard let url = lastCreatedProjectURL else { return "" }
+        return (url.path as NSString).abbreviatingWithTildeInPath
+    }
+
+    var canCreateProject: Bool {
+        !isRunning && !hasValidationErrors && !sanitizedProjectName.isEmpty
+    }
+
+    var projectNameValidationHint: String? {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return "Project name is required."
+        }
+
+        let typeName = sanitizeTypeName(trimmed)
+        if !isValidSwiftTypeName(typeName) {
+            return "Start with a letter so generated Swift type names are valid."
+        }
+
+        if sanitizedProjectName != trimmed {
+            return "Unsupported characters will be replaced automatically."
+        }
+
+        return nil
+    }
+
+    var isProjectNameInvalid: Bool {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        return !isValidSwiftTypeName(sanitizeTypeName(trimmed))
+    }
+
+    var iOSBundleValidationHint: String? {
+        bundleValidationHint(value: iOSBundleIdentifier, platform: .iOS)
+    }
+
+    var macOSBundleValidationHint: String? {
+        bundleValidationHint(value: macOSBundleIdentifier, platform: .macOS)
+    }
+
+    var tvOSBundleValidationHint: String? {
+        bundleValidationHint(value: tvOSBundleIdentifier, platform: .tvOS)
+    }
+
+    var isIOSBundleInvalid: Bool {
+        selectedPlatforms.contains(.iOS) && isBundleIdentifierInvalid(iOSBundleIdentifier)
+    }
+
+    var isMacOSBundleInvalid: Bool {
+        selectedPlatforms.contains(.macOS) && isBundleIdentifierInvalid(macOSBundleIdentifier)
+    }
+
+    var isTVOSBundleInvalid: Bool {
+        selectedPlatforms.contains(.tvOS) && isBundleIdentifierInvalid(tvOSBundleIdentifier)
+    }
+
+    var hasValidationErrors: Bool {
+        isProjectNameInvalid || isIOSBundleInvalid || isMacOSBundleInvalid || isTVOSBundleInvalid
+    }
+
+    var availablePresets: [CreationPreset] {
+        Self.builtInPresets + customPresets
+    }
+
+    var canDeleteSelectedPreset: Bool {
+        selectedPresetID.hasPrefix(Self.customPresetPrefix)
+    }
+
+    init() {
+        loadPersistedSettings()
+    }
 
     func createProjectSkeleton() {
         guard !isRunning else { return }
@@ -47,54 +253,221 @@ final class ProjectPilotViewModel: ObservableObject {
         statusLine = nil
     }
 
+    func clearTransientFeedback() {
+        clearStatus()
+        clearDetailLogs()
+        resetPipelineStepStates()
+    }
+
+    func copyDetailsToClipboard() {
+        guard !detailLogs.isEmpty else { return }
+        let text = detailLogs.map { event in
+            "[\(event.level.rawValue.uppercased())] \(event.message)"
+        }.joined(separator: "\n")
+        copyToClipboard(text)
+        setStatus(.success, "Copied details.")
+    }
+
+    func clearDetailLogs() {
+        detailLogs.removeAll()
+        isDetailsExpanded = false
+        hasFailureDetails = false
+    }
+
+    func openLastCreatedProjectInXcode() {
+        guard let projectURL = lastCreatedProjectURL else { return }
+        do {
+            try openInXcode(projectURL: projectURL)
+        } catch {
+            setStatus(.error, error.localizedDescription)
+        }
+    }
+
+    func revealLastCreatedProjectInFinder() {
+        guard let projectURL = lastCreatedProjectURL else { return }
+        do {
+            try revealInFinder(projectURL: projectURL)
+        } catch {
+            setStatus(.error, error.localizedDescription)
+        }
+    }
+
+    func copyLastCreatedProjectPath() {
+        guard let projectURL = lastCreatedProjectURL else { return }
+        copyToClipboard(projectURL.path)
+        setStatus(.success, "Copied project path.")
+    }
+
+    func applySelectedPreset() {
+        guard let preset = preset(withID: selectedPresetID) else {
+            setStatus(.error, "Choose a valid preset before applying.")
+            return
+        }
+        applyPreset(preset)
+        setStatus(.success, "Applied preset: \(preset.name)")
+    }
+
+    func saveCurrentAsPreset() {
+        let name = newPresetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            setStatus(.error, "Enter a preset name before saving.")
+            return
+        }
+
+        if let existingIndex = customPresets.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            customPresets[existingIndex] = currentPreset(id: customPresets[existingIndex].id, name: name)
+            selectedPresetID = customPresets[existingIndex].id
+            setStatus(.success, "Updated preset: \(name)")
+        } else {
+            let id = Self.customPresetPrefix + UUID().uuidString.lowercased()
+            let preset = currentPreset(id: id, name: name)
+            customPresets.append(preset)
+            customPresets.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            selectedPresetID = id
+            setStatus(.success, "Saved preset: \(name)")
+        }
+
+        newPresetName = ""
+    }
+
+    func deleteSelectedPreset() {
+        guard canDeleteSelectedPreset else {
+            setStatus(.error, "Built-in presets cannot be deleted.")
+            return
+        }
+
+        guard let index = customPresets.firstIndex(where: { $0.id == selectedPresetID }) else { return }
+        let removed = customPresets.remove(at: index)
+        selectedPresetID = Self.defaultPresetID
+        setStatus(.success, "Deleted preset: \(removed.name)")
+    }
+
+    func retryGitHubSetup() {
+        guard !isRunning else { return }
+        guard let name = pendingGitHubRetryName,
+              let path = pendingGitHubRetryPath else {
+            setStatus(.error, "No pending GitHub step to retry.")
+            return
+        }
+
+        Task {
+            await retryGitHubSetupAsync(name: name,
+                                        projectURL: URL(fileURLWithPath: path, isDirectory: true))
+        }
+    }
+
+    func copyLastRepoURLToClipboard() {
+        guard let repoURL = lastCreatedGitHubRepoURL, !repoURL.isEmpty else {
+            setStatus(.error, "No repo URL available to copy.")
+            return
+        }
+        copyToClipboard(repoURL)
+        setStatus(.success, "Copied repo URL.")
+    }
+
     // MARK: - Pipeline
 
     private func createProjectSkeletonAsync() async {
         let name = sanitizedProjectName
-        guard !name.isEmpty else {
-            setStatus(.error, "Please enter a project name.")
+        if let validationError = firstValidationErrorMessage {
+            setStatus(.error, validationError)
             return
         }
 
         // Ensure default platform settings exist before generation.
         populatePlatformDefaultsIfNeeded(projectName: name)
+        let templateProfile = selectedTemplateProfile
 
-        let projectURL = developmentRootURL.appendingPathComponent(name, isDirectory: true)
+        let rootURL = projectRootURL.standardizedFileURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: rootURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            setStatus(.error, "Project location is missing. Choose an existing folder.")
+            return
+        }
+
+        let projectURL = rootURL.appendingPathComponent(name, isDirectory: true)
 
         isRunning = true
         defer { isRunning = false }
 
         do {
-            setStatus(.info, "Creating folder…")
-            try createFolder(projectURL)
+            clearDetailLogs()
+            resetPipelineStepStates()
+            appendDetailLog(.info, "Starting scaffold for \(name)")
+            hasFailureDetails = false
 
-            setStatus(.info, "Generating Xcode project…")
-            let typeName = sanitizeTypeName(name)
-            try createXcodeProjectFromTemplate(projectName: typeName, at: projectURL)
+            clearPendingGitHubRetry()
+            lastCreatedGitHubRepoURL = nil
 
-            // Git ignore (before first commit).
-            try writeGitignoreIfNeeded(at: projectURL)
+            try runPipelineStep(.folder, statusMessage: "Creating folder…") {
+                try createFolder(projectURL)
+            }
 
-            setStatus(.info, "Initializing git…")
-            // Ensure the local default branch is `main`.
-            // (`git init -b main` is supported on modern Git; we still defensively rename below.)
-            _ = try runInDirectory(projectURL, ["/usr/bin/git", "init", "-b", "main"])
-            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
-            _ = try runInDirectory(projectURL, ["/usr/bin/git", "add", "-A"])
-            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "commit", "-m", "Initial commit"])
+            try runPipelineStep(.xcodeproj, statusMessage: "Generating Xcode project…") {
+                let typeName = sanitizeTypeName(name)
+                try createXcodeProjectFromTemplate(projectName: typeName,
+                                                   at: projectURL,
+                                                   templateProfile: templateProfile)
+            }
 
-            setStatus(.info, "Creating GitHub repo…")
-            try setupGitHubRepo(name: name, projectURL: projectURL)
+            try runPipelineStep(.git, statusMessage: "Initializing git…") {
+                // Git ignore (before first commit).
+                try writeGitignoreIfNeeded(at: projectURL)
 
-            setStatus(.info, "Opening in Xcode…")
-            try openInXcode(projectURL: projectURL)
+                // Ensure the local default branch is `main`.
+                // (`git init -b main` is supported on modern Git; we still defensively rename below.)
+                _ = try runInDirectory(projectURL, ["/usr/bin/git", "init", "-b", "main"])
+                _ = try? runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
+                _ = try runInDirectory(projectURL, ["/usr/bin/git", "add", "-A"])
+                _ = try? runInDirectory(projectURL, ["/usr/bin/git", "commit", "-m", "Initial commit"])
+            }
 
-            // You asked: clear the “text box” after folder created / after success.
-            // Practically: keep success only briefly then clear.
+            var gitHubErrorMessage: String? = nil
+            var repoURLForChecklist: String? = nil
+
+            if createGitHubRepo {
+                do {
+                    try runPipelineStep(.github, statusMessage: "Creating GitHub repo…") {
+                        repoURLForChecklist = try setupGitHubRepo(name: name, projectURL: projectURL)
+                    }
+                    lastCreatedGitHubRepoURL = repoURLForChecklist
+                } catch {
+                    setPendingGitHubRetry(name: name, projectURL: projectURL)
+                    gitHubErrorMessage = "GitHub step failed: \(error.localizedDescription)"
+                    appendDetailLog(.error, gitHubErrorMessage ?? "GitHub step failed.")
+                }
+            } else {
+                setPipelineStep(.github, to: .skipped)
+                appendDetailLog(.info, "Skipping GitHub repo step.")
+            }
+
+            if openInXcodeAfterCreate {
+                try runPipelineStep(.open, statusMessage: "Opening in Xcode…") {
+                    try openInXcode(projectURL: projectURL)
+                }
+            } else {
+                setPipelineStep(.open, to: .skipped)
+            }
+
+            if revealInFinderAfterCreate {
+                try revealInFinder(projectURL: projectURL)
+            }
+            if copyRepoURLAfterCreate, let repoURL = repoURLForChecklist, !repoURL.isEmpty {
+                copyToClipboard(repoURL)
+            }
+
+            if let gitHubErrorMessage {
+                setStatus(.error, "\(gitHubErrorMessage) Use Retry GitHub to continue.")
+                return
+            }
+
+            lastCreatedProjectURL = projectURL
             setStatus(.success, "Done ✅")
+            appendDetailLog(.success, "Project created at \(projectURL.path)")
             try? await Task.sleep(nanoseconds: 700_000_000)
             clearStatus()
         } catch {
+            appendDetailLog(.error, error.localizedDescription)
             setStatus(.error, error.localizedDescription)
         }
     }
@@ -106,6 +479,174 @@ final class ProjectPilotViewModel: ObservableObject {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
 
+    // MARK: - Project location
+
+    var projectRootPathDisplay: String {
+        (projectRootURL.path as NSString).abbreviatingWithTildeInPath
+    }
+
+    func chooseProjectRootFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = projectRootURL
+        panel.message = "Choose where new projects should be created."
+        panel.prompt = "Choose"
+        let app = NSApplication.shared
+        app.activate(ignoringOtherApps: true)
+
+        if let targetWindow = app.keyWindow ?? app.windows.first(where: { $0.isVisible }) {
+            panel.beginSheetModal(for: targetWindow) { response in
+                guard response == .OK, let selectedURL = panel.url else { return }
+                self.projectRootURL = selectedURL.standardizedFileURL
+            }
+            return
+        }
+
+        panel.level = .popUpMenu
+        if panel.runModal() == .OK, let selectedURL = panel.url {
+            projectRootURL = selectedURL.standardizedFileURL
+        }
+    }
+
+    private func retryGitHubSetupAsync(name: String, projectURL: URL) async {
+        isRunning = true
+        defer { isRunning = false }
+
+        do {
+            hasFailureDetails = false
+            try runPipelineStep(.github, statusMessage: "Retrying GitHub repo setup…") {
+                lastCreatedGitHubRepoURL = try setupGitHubRepo(name: name, projectURL: projectURL)
+            }
+            clearPendingGitHubRetry()
+
+            if copyRepoURLAfterCreate, let repoURL = lastCreatedGitHubRepoURL, !repoURL.isEmpty {
+                copyToClipboard(repoURL)
+            }
+
+            appendDetailLog(.success, "GitHub retry succeeded.")
+            setStatus(.success, "GitHub setup completed.")
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            clearStatus()
+        } catch {
+            appendDetailLog(.error, "GitHub retry failed: \(error.localizedDescription)")
+            setStatus(.error, "GitHub retry failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func setPendingGitHubRetry(name: String, projectURL: URL) {
+        pendingGitHubRetryName = name
+        pendingGitHubRetryPath = projectURL.path
+    }
+
+    private func clearPendingGitHubRetry() {
+        pendingGitHubRetryName = nil
+        pendingGitHubRetryPath = nil
+    }
+
+    private func copyToClipboard(_ value: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+    }
+
+    private var firstValidationErrorMessage: String? {
+        if isProjectNameInvalid {
+            return projectNameValidationHint ?? "Enter a valid project name."
+        }
+        if isIOSBundleInvalid {
+            return iOSBundleValidationHint ?? "Enter a valid iOS bundle identifier."
+        }
+        if isMacOSBundleInvalid {
+            return macOSBundleValidationHint ?? "Enter a valid macOS bundle identifier."
+        }
+        if isTVOSBundleInvalid {
+            return tvOSBundleValidationHint ?? "Enter a valid tvOS bundle identifier."
+        }
+        return nil
+    }
+
+    private func setPipelineStep(_ step: PipelineStep, to state: PipelineStepState) {
+        pipelineStepStates[step] = state
+    }
+
+    private func resetPipelineStepStates() {
+        pipelineStepStates = Self.defaultPipelineStepStates()
+    }
+
+    private func runPipelineStep(_ step: PipelineStep,
+                                 statusMessage: String,
+                                 action: () throws -> Void) throws {
+        setPipelineStep(step, to: .inProgress)
+        setStatus(.info, statusMessage)
+
+        do {
+            try action()
+            setPipelineStep(step, to: .success)
+        } catch {
+            setPipelineStep(step, to: .failure)
+            throw error
+        }
+    }
+
+    private func appendDetailLog(_ level: LogEvent.Level, _ message: String) {
+        let compact = compactLogMessage(message)
+        guard !compact.isEmpty else { return }
+        detailLogs.append(LogEvent(level: level, message: compact))
+        if detailLogs.count > 220 {
+            detailLogs.removeFirst(detailLogs.count - 220)
+        }
+    }
+
+    private func compactLogMessage(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let maxLength = 1200
+        if trimmed.count <= maxLength {
+            return trimmed
+        }
+        let end = trimmed.index(trimmed.startIndex, offsetBy: maxLength)
+        return String(trimmed[..<end]) + "\n…(truncated)…"
+    }
+
+    private func isValidSwiftTypeName(_ value: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        guard let first = value.unicodeScalars.first else { return false }
+        let validFirst = CharacterSet.letters.union(CharacterSet(charactersIn: "_"))
+        guard validFirst.contains(first) else { return false }
+
+        let validRest = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+        return value.unicodeScalars.allSatisfy { validRest.contains($0) }
+    }
+
+    private func bundleValidationHint(value: String, platform: Platform) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            if selectedPlatforms.contains(platform) {
+                return "Blank uses default: dn.<project-name>."
+            }
+            return nil
+        }
+
+        if isBundleIdentifierInvalid(trimmed) {
+            return "Use reverse-DNS format, e.g. com.example.app."
+        }
+
+        return nil
+    }
+
+    private func isBundleIdentifierInvalid(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let pattern = "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$"
+        let range = NSRange(location: 0, length: trimmed.utf16.count)
+        let regex = try? NSRegularExpression(pattern: pattern)
+        return regex?.firstMatch(in: trimmed, range: range) == nil
+    }
+
     // MARK: - Xcode Project Generation (Template .xcodeproj)
 
     /// Generates a multi-platform SwiftUI project whose **Xcode project settings** match the provided
@@ -115,7 +656,9 @@ final class ProjectPilotViewModel: ObservableObject {
     /// - This template uses Xcode's *file system synchronized groups* (PBXFileSystemSynchronizedRootGroup),
     ///   so we don't need to enumerate every Swift file in the pbxproj.
     /// - The only intended customization is the **project name**.
-    private func createXcodeProjectFromTemplate(projectName: String, at projectURL: URL) throws {
+    private func createXcodeProjectFromTemplate(projectName: String,
+                                                at projectURL: URL,
+                                                templateProfile: TemplateProfile) throws {
         // Folder layout expected by the template.
         let appFolderURL = projectURL.appendingPathComponent(projectName, isDirectory: true)
         let unitTestsURL = projectURL.appendingPathComponent("\(projectName)Tests", isDirectory: true)
@@ -127,13 +670,13 @@ final class ProjectPilotViewModel: ObservableObject {
 
         // Project README
         try writeIfMissing(url: projectURL.appendingPathComponent("README.md"),
-                           contents: readmeTemplate(projectName: projectName))
+                           contents: readmeTemplate(projectName: projectName, templateProfile: templateProfile))
 
         // App sources
         try writeIfMissing(url: appFolderURL.appendingPathComponent("\(projectName)App.swift"),
                            contents: multiplatformAppTemplate(projectName: projectName))
         try writeIfMissing(url: appFolderURL.appendingPathComponent("ContentView.swift"),
-                           contents: multiplatformContentViewTemplate())
+                           contents: contentTemplate(for: templateProfile, projectName: projectName))
         try writeIfMissing(url: appFolderURL.appendingPathComponent("Info.plist"),
                            contents: infoPlistTemplate())
         try writeIfMissing(url: appFolderURL.appendingPathComponent("\(projectName).entitlements"),
@@ -468,7 +1011,18 @@ struct \(projectName)App: App {
 """
     }
 
-    private func multiplatformContentViewTemplate() -> String {
+    private func contentTemplate(for templateProfile: TemplateProfile, projectName: String) -> String {
+        switch templateProfile {
+        case .starterApp:
+            return starterContentViewTemplate()
+        case .dashboardApp:
+            return dashboardContentViewTemplate(projectName: projectName)
+        case .utilityTool:
+            return utilityToolContentViewTemplate()
+        }
+    }
+
+    private func starterContentViewTemplate() -> String {
         """
 import SwiftUI
 
@@ -480,6 +1034,71 @@ struct ContentView: View {
             Text("Hello, world!")
         }
         .padding()
+    }
+}
+
+#Preview {
+    ContentView()
+}
+"""
+    }
+
+    private func dashboardContentViewTemplate(projectName: String) -> String {
+        """
+import SwiftUI
+
+struct ContentView: View {
+    var body: some View {
+        NavigationSplitView {
+            List {
+                Label("Overview", systemImage: "rectangle.grid.2x2")
+                Label("Tasks", systemImage: "checklist")
+                Label("Notes", systemImage: "note.text")
+            }
+            .navigationTitle("Sections")
+        } detail: {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("\(projectName)")
+                    .font(.title2.weight(.semibold))
+                Text("Dashboard template is ready for your first feature.")
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(20)
+        }
+    }
+}
+
+#Preview {
+    ContentView()
+}
+"""
+    }
+
+    private func utilityToolContentViewTemplate() -> String {
+        """
+import SwiftUI
+
+struct ContentView: View {
+    @State private var input: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Utility Tool")
+                .font(.title3.weight(.semibold))
+
+            TextField("Paste value...", text: $input)
+                .textFieldStyle(.roundedBorder)
+
+            HStack {
+                Button("Run") {}
+                Spacer()
+                Text("Ready")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 360)
     }
 }
 
@@ -515,7 +1134,7 @@ struct ContentView: View {
 """
     }
 
-    private func readmeTemplate(projectName: String) -> String {
+    private func readmeTemplate(projectName: String, templateProfile: TemplateProfile) -> String {
         """
 # \(projectName)
 
@@ -526,6 +1145,8 @@ struct ContentView: View {
 
 ## Overview
 \(projectName) is a SwiftUI app scaffold created by **ProjectPilot**. This README is intentionally minimal and will grow as the project evolves.
+
+- Template profile: **\(templateProfile.title)**
 
 ## Requirements
 - macOS with Xcode installed
@@ -555,7 +1176,7 @@ Created with **ProjectPilot**.
     }
     // MARK: - GitHub
 
-    private func setupGitHubRepo(name: String, projectURL: URL) throws {
+    private func setupGitHubRepo(name: String, projectURL: URL) throws -> String? {
         let gh = resolvedGHCommandPrefix()
         let repoName = sanitizeRepoName(name)
         let visibilityFlag = createPublicGitHubRepo ? "--public" : "--private"
@@ -587,6 +1208,14 @@ Created with **ProjectPilot**.
             _ = try runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "github", sshURL])
             _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "github", "HEAD"])
         }
+
+        return resolveGitHubRepoURL(repoName: repoName, gh: gh, projectURL: projectURL)
+    }
+
+    private func resolveGitHubRepoURL(repoName: String, gh: [String], projectURL: URL) -> String? {
+        let out = try? runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "url", "-q", ".url"])
+        let trimmed = out?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func sanitizeRepoName(_ name: String) -> String {
@@ -640,6 +1269,10 @@ Created with **ProjectPilot**.
         _ = try run([ "/usr/bin/open", "-a", "Xcode", xcodeproj.path ])
     }
 
+    private func revealInFinder(projectURL: URL) throws {
+        _ = try run(["/usr/bin/open", "-R", projectURL.path])
+    }
+
     // MARK: - Process helpers
 
     private func resolveXcodeGen() throws -> String {
@@ -686,6 +1319,7 @@ Created with **ProjectPilot**.
     private func run(_ argv: [String], cwd: URL? = nil) throws -> String {
         guard let exe = argv.first else { throw PPError("Invalid command.") }
         let args = Array(argv.dropFirst())
+        appendDetailLog(.info, "$ " + ([exe] + args).joined(separator: " "))
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: exe)
@@ -705,10 +1339,22 @@ Created with **ProjectPilot**.
 
         let outStr = String(data: outData, encoding: .utf8) ?? ""
         let errStr = String(data: errData, encoding: .utf8) ?? ""
+        let outTrimmed = outStr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let errTrimmed = errStr.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if process.terminationStatus != 0 {
-            let msg = errStr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !errTrimmed.isEmpty {
+                appendDetailLog(.error, errTrimmed)
+            }
+            if !outTrimmed.isEmpty {
+                appendDetailLog(.error, outTrimmed)
+            }
+            let msg = errTrimmed
             throw PPError(msg.isEmpty ? "Command failed: \(exe) \(args.joined(separator: " "))" : msg)
+        }
+
+        if !outTrimmed.isEmpty {
+            appendDetailLog(.info, outTrimmed)
         }
 
         return outStr
@@ -749,10 +1395,222 @@ Created with **ProjectPilot**.
     // MARK: - Status
 
     private func setStatus(_ level: StatusLevel, _ message: String) {
+        if level == .error {
+            hasFailureDetails = true
+            isDetailsExpanded = true
+        }
         statusLine = StatusLine(level: level, message: message)
     }
 
+    // MARK: - Presets
+
+    private func preset(withID id: String) -> CreationPreset? {
+        availablePresets.first(where: { $0.id == id })
+    }
+
+    private func applyPreset(_ preset: CreationPreset) {
+        selectedTemplateProfile = preset.templateProfile
+        selectedPlatforms = preset.platforms.isEmpty ? [.macOS] : preset.platforms
+        iOSBundleIdentifier = preset.iOSBundleIdentifier
+        macOSBundleIdentifier = preset.macOSBundleIdentifier
+        tvOSBundleIdentifier = preset.tvOSBundleIdentifier
+        createGitHubRepo = preset.createGitHubRepo
+        createPublicGitHubRepo = preset.createPublicGitHubRepo
+    }
+
+    private func currentPreset(id: String, name: String) -> CreationPreset {
+        CreationPreset(
+            id: id,
+            name: name,
+            templateProfile: selectedTemplateProfile,
+            platforms: selectedPlatforms,
+            iOSBundleIdentifier: iOSBundleIdentifier,
+            macOSBundleIdentifier: macOSBundleIdentifier,
+            tvOSBundleIdentifier: tvOSBundleIdentifier,
+            createGitHubRepo: createGitHubRepo,
+            createPublicGitHubRepo: createPublicGitHubRepo
+        )
+    }
+
+    private func resolveSelectedPresetIDAfterLoad() {
+        if preset(withID: selectedPresetID) != nil {
+            return
+        }
+        selectedPresetID = Self.defaultPresetID
+    }
+
+    // MARK: - Persistence
+
+    private func loadPersistedSettings() {
+        let defaults = UserDefaults.standard
+
+        if let rootPath = defaults.string(forKey: Self.StorageKey.projectRootPath) {
+            projectRootURL = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+        }
+
+        if let values = defaults.array(forKey: Self.StorageKey.selectedPlatforms) as? [String] {
+            let parsed = Set(values.compactMap(Platform.init(rawValue:)))
+            if !parsed.isEmpty {
+                selectedPlatforms = parsed
+            }
+        }
+
+        iOSBundleIdentifier = defaults.string(forKey: Self.StorageKey.iOSBundleIdentifier) ?? iOSBundleIdentifier
+        macOSBundleIdentifier = defaults.string(forKey: Self.StorageKey.macOSBundleIdentifier) ?? macOSBundleIdentifier
+        tvOSBundleIdentifier = defaults.string(forKey: Self.StorageKey.tvOSBundleIdentifier) ?? tvOSBundleIdentifier
+
+        if let rawProfile = defaults.string(forKey: Self.StorageKey.templateProfile),
+           let profile = TemplateProfile(rawValue: rawProfile) {
+            selectedTemplateProfile = profile
+        }
+
+        if defaults.object(forKey: Self.StorageKey.createGitHubRepo) != nil {
+            createGitHubRepo = defaults.bool(forKey: Self.StorageKey.createGitHubRepo)
+        }
+        if defaults.object(forKey: Self.StorageKey.createPublicGitHubRepo) != nil {
+            createPublicGitHubRepo = defaults.bool(forKey: Self.StorageKey.createPublicGitHubRepo)
+        }
+
+        if defaults.object(forKey: Self.StorageKey.openInXcodeAfterCreate) != nil {
+            openInXcodeAfterCreate = defaults.bool(forKey: Self.StorageKey.openInXcodeAfterCreate)
+        }
+        if defaults.object(forKey: Self.StorageKey.revealInFinderAfterCreate) != nil {
+            revealInFinderAfterCreate = defaults.bool(forKey: Self.StorageKey.revealInFinderAfterCreate)
+        }
+        if defaults.object(forKey: Self.StorageKey.copyRepoURLAfterCreate) != nil {
+            copyRepoURLAfterCreate = defaults.bool(forKey: Self.StorageKey.copyRepoURLAfterCreate)
+        }
+
+        if let data = defaults.data(forKey: Self.StorageKey.customPresets),
+           let decoded = try? JSONDecoder().decode([CreationPreset].self, from: data) {
+            customPresets = decoded
+        }
+
+        if let presetID = defaults.string(forKey: Self.StorageKey.selectedPresetID) {
+            selectedPresetID = presetID
+        }
+
+        resolveSelectedPresetIDAfterLoad()
+    }
+
+    private func persistProjectRootURL() {
+        UserDefaults.standard.set(projectRootURL.path, forKey: Self.StorageKey.projectRootPath)
+    }
+
+    private func persistSelectedPlatforms() {
+        let values = selectedPlatforms.map(\.rawValue).sorted()
+        UserDefaults.standard.set(values, forKey: Self.StorageKey.selectedPlatforms)
+    }
+
+    private func persistBundleIdentifiers() {
+        let defaults = UserDefaults.standard
+        defaults.set(iOSBundleIdentifier, forKey: Self.StorageKey.iOSBundleIdentifier)
+        defaults.set(macOSBundleIdentifier, forKey: Self.StorageKey.macOSBundleIdentifier)
+        defaults.set(tvOSBundleIdentifier, forKey: Self.StorageKey.tvOSBundleIdentifier)
+    }
+
+    private func persistTemplateProfile() {
+        UserDefaults.standard.set(selectedTemplateProfile.rawValue, forKey: Self.StorageKey.templateProfile)
+    }
+
+    private func persistGitHubSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(createGitHubRepo, forKey: Self.StorageKey.createGitHubRepo)
+        defaults.set(createPublicGitHubRepo, forKey: Self.StorageKey.createPublicGitHubRepo)
+    }
+
+    private func persistPostCreateSettings() {
+        let defaults = UserDefaults.standard
+        defaults.set(openInXcodeAfterCreate, forKey: Self.StorageKey.openInXcodeAfterCreate)
+        defaults.set(revealInFinderAfterCreate, forKey: Self.StorageKey.revealInFinderAfterCreate)
+        defaults.set(copyRepoURLAfterCreate, forKey: Self.StorageKey.copyRepoURLAfterCreate)
+    }
+
+    private func persistCustomPresets() {
+        if let data = try? JSONEncoder().encode(customPresets) {
+            UserDefaults.standard.set(data, forKey: Self.StorageKey.customPresets)
+        }
+    }
+
+    private func persistSelectedPresetID() {
+        UserDefaults.standard.set(selectedPresetID, forKey: Self.StorageKey.selectedPresetID)
+    }
+
     // MARK: - Defaults
+
+    private enum StorageKey {
+        static let projectRootPath = "projectPilot.projectRootPath"
+        static let selectedPlatforms = "projectPilot.selectedPlatforms"
+        static let iOSBundleIdentifier = "projectPilot.iOSBundleIdentifier"
+        static let macOSBundleIdentifier = "projectPilot.macOSBundleIdentifier"
+        static let tvOSBundleIdentifier = "projectPilot.tvOSBundleIdentifier"
+        static let templateProfile = "projectPilot.templateProfile"
+        static let createGitHubRepo = "projectPilot.createGitHubRepo"
+        static let createPublicGitHubRepo = "projectPilot.createPublicGitHubRepo"
+        static let openInXcodeAfterCreate = "projectPilot.openInXcodeAfterCreate"
+        static let revealInFinderAfterCreate = "projectPilot.revealInFinderAfterCreate"
+        static let copyRepoURLAfterCreate = "projectPilot.copyRepoURLAfterCreate"
+        static let customPresets = "projectPilot.customPresets"
+        static let selectedPresetID = "projectPilot.selectedPresetID"
+    }
+
+    private static func defaultPipelineStepStates() -> [PipelineStep: PipelineStepState] {
+        var states: [PipelineStep: PipelineStepState] = [:]
+        PipelineStep.allCases.forEach { states[$0] = .pending }
+        return states
+    }
+
+    private static let customPresetPrefix = "custom."
+    private static let defaultPresetID = "builtin.ios-app"
+
+    private static let builtInPresets: [CreationPreset] = [
+        CreationPreset(
+            id: "builtin.ios-app",
+            name: "iOS App",
+            templateProfile: .starterApp,
+            platforms: [.iOS],
+            iOSBundleIdentifier: "",
+            macOSBundleIdentifier: "",
+            tvOSBundleIdentifier: "",
+            createGitHubRepo: true,
+            createPublicGitHubRepo: false
+        ),
+        CreationPreset(
+            id: "builtin.macos-tool",
+            name: "macOS Tool",
+            templateProfile: .utilityTool,
+            platforms: [.macOS],
+            iOSBundleIdentifier: "",
+            macOSBundleIdentifier: "",
+            tvOSBundleIdentifier: "",
+            createGitHubRepo: true,
+            createPublicGitHubRepo: false
+        ),
+        CreationPreset(
+            id: "builtin.multiplatform-dashboard",
+            name: "Multiplatform Dashboard",
+            templateProfile: .dashboardApp,
+            platforms: [.iOS, .macOS, .tvOS],
+            iOSBundleIdentifier: "",
+            macOSBundleIdentifier: "",
+            tvOSBundleIdentifier: "",
+            createGitHubRepo: true,
+            createPublicGitHubRepo: false
+        ),
+    ]
+
+    private static func defaultProjectRootURL() -> URL {
+        let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
+        let development = home.appendingPathComponent("Development", isDirectory: true)
+
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: development.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return development
+        }
+
+        return home
+    }
 
     private static let defaultGitignore = """
     # Xcode
