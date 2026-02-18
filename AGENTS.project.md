@@ -20,6 +20,7 @@ We have a robust scaffold pipeline with quality-of-life UX:
 10) Creation progress is visible with a compact step timeline (Folder → Xcodeproj → Git → GitHub → Open).
 11) Failure diagnostics include an expandable details log panel with copy-to-clipboard support.
 12) The popover separates **Basic** vs **Advanced** sections and supports keyboard-first flows (Enter create, Cmd+R retry, Esc clear status).
+13) After a successful create, project form inputs reset to blank (project name + bundle IDs) so the next scaffold starts clean.
 
 Current focus should be reliability, warning-free builds, and predictable generation behavior (especially honoring preset/platform intent).
 

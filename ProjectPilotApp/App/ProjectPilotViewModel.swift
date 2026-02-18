@@ -469,6 +469,7 @@ final class ProjectPilotViewModel: ObservableObject {
             }
 
             lastCreatedProjectURL = projectURL
+            resetCreateFormFields()
             setStatus(.success, "Done ✅")
             appendDetailLog(.success, "Project created at \(projectURL.path)")
             try? await Task.sleep(nanoseconds: 700_000_000)
@@ -484,6 +485,14 @@ final class ProjectPilotViewModel: ObservableObject {
             throw PPError("Folder already exists: \(url.lastPathComponent)")
         }
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+
+    private func resetCreateFormFields() {
+        projectName = ""
+        iOSBundleIdentifier = ""
+        macOSBundleIdentifier = ""
+        tvOSBundleIdentifier = ""
+        newPresetName = ""
     }
 
     // MARK: - Project location
