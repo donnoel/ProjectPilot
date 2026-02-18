@@ -142,33 +142,56 @@ struct ProjectPilotPopover: View {
 
     private var projectSection: some View {
         section("Project") {
-            LabeledContent("Name") {
-                TextField("e.g. LoomTools", text: $vm.projectName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 280)
-            }
-            .font(.subheadline)
+            VStack(spacing: 0) {
+                HStack(alignment: .center, spacing: 10) {
+                    Text("Name")
+                        .font(.subheadline.weight(.medium))
+                        .frame(width: 72, alignment: .leading)
 
-            if let hint = vm.projectNameValidationHint {
-                validationHint(hint, isError: vm.isProjectNameInvalid)
-            }
-
-            LabeledContent("Location") {
-                HStack(spacing: 8) {
-                    Text(vm.projectRootPathDisplay)
-                        .font(.caption.monospaced())
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 220, alignment: .leading)
-
-                    Button("Choose…") {
-                        vm.chooseProjectRootFolder()
-                    }
-                    .controlSize(.small)
-                    .disabled(vm.isRunning)
+                    TextField("e.g. LoomTools", text: $vm.projectName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: .infinity)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 7)
+
+                if let hint = vm.projectNameValidationHint {
+                    validationHint(hint, isError: vm.isProjectNameInvalid)
+                        .padding(.leading, 82)
+                        .padding(.bottom, 6)
+                }
+
+                Divider().opacity(0.20)
+
+                HStack(alignment: .center, spacing: 10) {
+                    Text("Location")
+                        .font(.subheadline.weight(.medium))
+                        .frame(width: 72, alignment: .leading)
+
+                    HStack(spacing: 8) {
+                        Text(vm.projectRootPathDisplay)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Button("Choose…") {
+                            vm.chooseProjectRootFolder()
+                        }
+                        .controlSize(.small)
+                        .disabled(vm.isRunning)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 7)
             }
-            .font(.subheadline)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.white.opacity(0.05))
+            )
         }
     }
 
@@ -212,22 +235,39 @@ struct ProjectPilotPopover: View {
 
     private var templateSection: some View {
         section("Template") {
-            LabeledContent("Profile") {
-                Picker("Profile", selection: $vm.selectedTemplateProfile) {
-                    ForEach(ProjectPilotViewModel.TemplateProfile.allCases) { profile in
-                        Text(profile.title).tag(profile)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: 240)
-            }
-            .font(.subheadline)
+            VStack(spacing: 0) {
+                HStack(alignment: .center, spacing: 10) {
+                    Text("Profile")
+                        .font(.subheadline.weight(.medium))
+                        .frame(width: 72, alignment: .leading)
 
-            Text(vm.selectedTemplateProfile.description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                    Picker("Profile", selection: $vm.selectedTemplateProfile) {
+                        ForEach(ProjectPilotViewModel.TemplateProfile.allCases) { profile in
+                            Text(profile.title).tag(profile)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 7)
+
+                Divider().opacity(0.20)
+
+                Text(vm.selectedTemplateProfile.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 7)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.white.opacity(0.05))
+            )
         }
     }
 
