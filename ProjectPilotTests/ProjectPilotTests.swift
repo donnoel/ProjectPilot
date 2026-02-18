@@ -67,6 +67,24 @@ struct ProjectPilotTests {
     }
 
     @MainActor
+    @Test func ciDestinationMatchesSelectedPlatforms() {
+        #expect(ProjectPilotViewModel.ciDestination(for: [.macOS]) == "platform=macOS")
+        #expect(ProjectPilotViewModel.ciDestination(for: [.iOS]) == "platform=iOS Simulator")
+        #expect(ProjectPilotViewModel.ciDestination(for: [.tvOS]) == "platform=tvOS Simulator")
+        #expect(ProjectPilotViewModel.ciDestination(for: [.iOS, .macOS]) == "platform=macOS")
+    }
+
+    @MainActor
+    @Test func ciWorkflowTemplateUsesProjectNameAndDestination() {
+        let workflow = ProjectPilotViewModel.ciWorkflowTemplate(projectName: "SampleApp",
+                                                                platforms: [.iOS])
+
+        #expect(workflow.contains("-project SampleApp.xcodeproj"))
+        #expect(workflow.contains("-scheme SampleApp"))
+        #expect(workflow.contains("DESTINATION=\"platform=iOS Simulator\""))
+    }
+
+    @MainActor
     private func clearProjectPilotDefaults() {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("projectPilot.") {

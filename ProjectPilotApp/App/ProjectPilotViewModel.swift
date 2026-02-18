@@ -686,6 +686,7 @@ final class ProjectPilotViewModel: ObservableObject {
                            contents: agentsTemplate())
         try writeIfMissing(url: projectURL.appendingPathComponent("AGENTS.project.md"),
                            contents: projectAgentsTemplate(projectName: projectName))
+        try writeCIWorkflowIfNeeded(projectName: projectName, at: projectURL)
 
         // App sources
         try writeIfMissing(url: appFolderURL.appendingPathComponent("\(projectName)App.swift"),
@@ -782,6 +783,16 @@ final class ProjectPilotViewModel: ObservableObject {
         return platforms.joined(separator: " ")
     }
 
+    static func ciDestination(for platforms: Set<Platform>) -> String {
+        if platforms.contains(.macOS) {
+            return "platform=macOS"
+        }
+        if platforms.contains(.iOS) {
+            return "platform=iOS Simulator"
+        }
+        return "platform=tvOS Simulator"
+    }
+
     private func applySupportedPlatforms(to pbxproj: String) -> String {
         let joined = supportedPlatformsBuildSettingValue()
         return pbxproj.replacingOccurrences(of: "SUPPORTED_PLATFORMS = \"iphoneos iphonesimulator macosx\";",
@@ -823,6 +834,69 @@ final class ProjectPilotViewModel: ObservableObject {
     private func writeIfMissing(url: URL, contents: String) throws {
         guard !FileManager.default.fileExists(atPath: url.path) else { return }
         try contents.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func writeCIWorkflowIfNeeded(projectName: String, at projectURL: URL) throws {
+        let workflowDirectoryURL = projectURL
+            .appendingPathComponent(".github", isDirectory: true)
+            .appendingPathComponent("workflows", isDirectory: true)
+        try FileManager.default.createDirectory(at: workflowDirectoryURL, withIntermediateDirectories: true)
+        let workflowURL = workflowDirectoryURL.appendingPathComponent("ci.yml")
+        try writeIfMissing(url: workflowURL,
+                           contents: Self.ciWorkflowTemplate(projectName: projectName,
+                                                             platforms: selectedPlatforms))
+    }
+
+    static func ciWorkflowTemplate(projectName: String, platforms: Set<Platform>) -> String {
+        let destination = ciDestination(for: platforms)
+        return """
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve test destination
+        id: destination
+        run: |
+          DESTINATION="\(destination)"
+
+          if [[ "$DESTINATION" == "platform=macOS" ]]; then
+            echo "value=$DESTINATION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$DESTINATION" == "platform=iOS Simulator" ]]; then
+            DEVICE_ID=$(xcrun simctl list devices available | awk -F '[()]' '/iPhone|iPad/ { print $2; exit }')
+          else
+            DEVICE_ID=$(xcrun simctl list devices available | awk -F '[()]' '/Apple TV/ { print $2; exit }')
+          fi
+
+          if [[ -z "$DEVICE_ID" ]]; then
+            echo "No compatible simulator found for $DESTINATION."
+            exit 1
+          fi
+
+          echo "value=id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: |
+          xcodebuild \\
+            -project \(projectName).xcodeproj \\
+            -scheme \(projectName) \\
+            -destination '${{ steps.destination.outputs.value }}' \\
+            CODE_SIGNING_ALLOWED=NO \\
+            clean test
+"""
     }
 
     private func createDefaultAssetCatalogs(in appFolderURL: URL) throws {

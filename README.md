@@ -31,6 +31,7 @@ It can also:
 | 🧱 **Template-Accurate Xcode Projects** | Generates projects by transforming a golden `.xcodeproj` template so settings match exactly. |
 | 🧩 **Platform Selection** | Create a project for **iOS**, **macOS**, **tvOS**, or any combination supported by the template. |
 | 🪄 **One-Click Bootstrap** | Creates folders + starter SwiftUI app + tests + assets with a clean, consistent layout. |
+| ✅ **Starter CI Workflow** | Generates `.github/workflows/ci.yml` per project with project-specific scheme/path and destination-aware test execution. |
 | 🧼 **Clean Git Start** | Initializes git, writes a sensible `.gitignore`, and commits “Initial commit.” |
 | ☁️ **GitHub Repo Creation** | Creates a repo using `gh` and pushes automatically. |
 | 🔒 **Public/Private Toggle** | Choose whether the GitHub repo is created as public or private. |
@@ -58,14 +59,15 @@ ProjectPilot follows a predictable pipeline:
 
 1. **Create folder** for the new project
 2. **Write starter source files** (SwiftUI entry, basic content, tests, assets)
-3. **Generate `.xcodeproj`** by:
+3. **Generate starter project metadata** (README, AGENTS files, and `.github/workflows/ci.yml`)
+4. **Generate `.xcodeproj`** by:
    - reading the golden template `project.pbxproj`
    - replacing template identifiers with your project name
    - updating supported platforms based on selection
-4. **Initialize git**, write `.gitignore`, commit
-5. **Create GitHub repo** with `gh repo create` (public/private)
-6. **Set origin + push**
-7. **Open in Xcode**
+5. **Initialize git**, write `.gitignore`, commit
+6. **Create GitHub repo** with `gh repo create` (public/private)
+7. **Set origin + push**
+8. **Open in Xcode**
 
 ---
 
