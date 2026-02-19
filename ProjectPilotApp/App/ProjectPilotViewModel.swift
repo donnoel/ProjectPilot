@@ -1400,6 +1400,23 @@ Provide:
         // Local branch stays "main", remote branch is "github".
         _ = try runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
         _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "github", "HEAD:\(remoteBranchName)"])
+        _ = try runInDirectory(projectURL, gh + ["repo", "edit", repoName, "--default-branch", remoteBranchName])
+
+        let remoteMainHead = try runInDirectory(
+            projectURL,
+            ["/usr/bin/git", "ls-remote", "--heads", "github", "refs/heads/main"]
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !remoteMainHead.isEmpty {
+            do {
+                _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "github", "--delete", "main"])
+            } catch {
+                throw PPError(
+                    "Created remote branch '\(remoteBranchName)' but could not remove remote 'main'. " +
+                    "Update default branch to '\(remoteBranchName)' and retry. Details: \(error.localizedDescription)"
+                )
+            }
+        }
 
         return resolveGitHubRepoURL(repoName: repoName, gh: gh, projectURL: projectURL)
     }

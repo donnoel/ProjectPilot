@@ -19,7 +19,7 @@ Instead of generating “close enough” settings, ProjectPilot produces a proje
 It can also:
 - initialize a git repo,
 - create a GitHub repo via `gh`,
-- push the initial commit,
+- push the initial commit to remote branch `github` (and remove remote `main`),
 - and open the project in Xcode.
 
 ---
@@ -66,7 +66,7 @@ ProjectPilot follows a predictable pipeline:
    - updating supported platforms based on selection
 5. **Initialize git**, write `.gitignore`, commit
 6. **Create GitHub repo** with `gh repo create` (public/private)
-7. **Set origin + push**
+7. **Push to remote branch `github`**, set GitHub default branch to `github`, and remove remote `main`
 8. **Open in Xcode**
 
 ---

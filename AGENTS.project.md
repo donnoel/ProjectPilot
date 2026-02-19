@@ -11,7 +11,7 @@ We have a robust scaffold pipeline with quality-of-life UX:
 1) Project creation supports local folder creation, starter SwiftUI files, assets, tests, and `.xcodeproj` generation from a template pbxproj.
 2) Platform targeting supports iOS, macOS, tvOS, with platform-aware project settings.
 3) Git bootstrapping initializes local git, commits initial content, and keeps local default branch as `main`.
-4) GitHub automation supports optional repo creation via `gh`, public/private visibility, remote name `github`, and push retry without restarting full scaffold.
+4) GitHub automation supports optional repo creation via `gh`, public/private visibility, remote name `github`, remote default branch `github` (with remote `main` removed), and push retry without restarting full scaffold.
 5) Project location is user-selectable (not fixed to one directory), with persisted selection.
 6) Presets are supported (built-in + custom) and can store platforms, template profile, and GitHub visibility defaults.
 7) Template profiles are supported so users can scaffold from multiple golden starter variants.
