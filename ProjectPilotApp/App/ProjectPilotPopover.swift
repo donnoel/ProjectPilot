@@ -9,6 +9,7 @@ struct ProjectPilotPopover: View {
     enum Mode: String, CaseIterable, Identifiable {
         case basic = "Basic"
         case advanced = "Advanced"
+        case codex = "Codex"
 
         var id: String { rawValue }
     }
@@ -20,12 +21,17 @@ struct ProjectPilotPopover: View {
             VStack(alignment: .leading, spacing: 10) {
                 header
                 modePicker
-                progressTimeline
+                if mode != .codex {
+                    progressTimeline
+                }
 
-                if mode == .basic {
+                switch mode {
+                case .basic:
                     basicSections
-                } else {
+                case .advanced:
                     advancedSections
+                case .codex:
+                    codexSections
                 }
 
                 feedbackSection
@@ -136,6 +142,52 @@ struct ProjectPilotPopover: View {
         Group {
             templateSection
             postCreateSection
+        }
+    }
+
+    private var codexSections: some View {
+        section("Balance") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Codex quota")
+                            .font(.subheadline.weight(.semibold))
+                        if let updatedAt = vm.codexQuotaLastUpdatedAt {
+                            Text("Updated \(updatedAt.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        vm.refreshCodexQuota()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .controlSize(.small)
+                }
+
+                codexUsageCard(
+                    title: "5 hour usage limit",
+                    usageLimit: vm.codexQuotaSnapshot?.primary
+                )
+
+                codexUsageCard(
+                    title: "Weekly usage limit",
+                    usageLimit: vm.codexQuotaSnapshot?.secondary
+                )
+
+                codexCreditsCard(vm.codexQuotaSnapshot?.credits)
+
+                if let message = vm.codexQuotaError {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 
@@ -469,6 +521,97 @@ struct ProjectPilotPopover: View {
             .font(.caption2)
             .foregroundStyle(isError ? .red : .secondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func codexUsageCard(
+        title: String,
+        usageLimit: ProjectPilotViewModel.CodexQuotaSnapshot.UsageLimit?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if let usageLimit {
+                Text("\(Int(usageLimit.remainingPercent.rounded()))% remaining")
+                    .font(.title3.weight(.semibold))
+
+                ProgressView(value: usageLimit.remainingPercent, total: 100)
+                    .progressViewStyle(.linear)
+                    .tint(codexUsageTint(remainingPercent: usageLimit.remainingPercent))
+
+                Text(codexResetText(for: usageLimit.resetAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Waiting for Codex usage data…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
+    }
+
+    @ViewBuilder
+    private func codexCreditsCard(_ credits: ProjectPilotViewModel.CodexQuotaSnapshot.Credits?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Credits remaining")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if let credits {
+                Text(codexCreditsText(for: credits))
+                    .font(.title3.weight(.semibold))
+
+                if credits.isUnlimited {
+                    Text("Your plan has unlimited credits.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if credits.hasCredits {
+                    Text("Credits can be used after your plan limits are reached.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No extra credits available.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Waiting for Codex credits data…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
+    }
+
+    private func codexUsageTint(remainingPercent: Double) -> Color {
+        switch remainingPercent {
+        case ..<10: return .red
+        case ..<30: return .orange
+        default: return .green
+        }
+    }
+
+    private func codexResetText(for resetAt: Date?) -> String {
+        guard let resetAt else { return "Reset time unavailable" }
+        if Calendar.current.isDateInToday(resetAt) {
+            return "Resets \(resetAt.formatted(date: .omitted, time: .shortened))"
+        }
+        return "Resets \(resetAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private func codexCreditsText(for credits: ProjectPilotViewModel.CodexQuotaSnapshot.Credits) -> String {
+        if credits.isUnlimited {
+            return "Unlimited"
+        }
+        guard let balance = credits.balance else {
+            return credits.hasCredits ? "Available" : "0"
+        }
+        return balance.formatted(.number.precision(.fractionLength(0...2)))
     }
 
     private func toggleSettingRow(

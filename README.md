@@ -35,6 +35,7 @@ It can also:
 | 🧼 **Clean Git Start** | Initializes git, writes a sensible `.gitignore`, and commits “Initial commit.” |
 | ☁️ **GitHub Repo Creation** | Creates a repo using `gh` and pushes automatically. |
 | 🔒 **Public/Private Toggle** | Choose whether the GitHub repo is created as public or private. |
+| 📊 **Codex Quota Tab** | Shows live Codex 5-hour + weekly usage limits and credits from local Codex session data. |
 | 🧊 **Liquid Glass UI** | Compact, premium-looking popover with macOS visual effect styling. |
 | 🔁 **Runs at Login** | Registers as a Login Item so it starts automatically after you log in. |
 
@@ -44,10 +45,13 @@ It can also:
 
 - **Project Name**: Enter the folder/project name to create.
 - **Platforms**: Tap the platform “pills” to select iOS/macOS/tvOS.
+- **Mode Tabs**: Switch between **Basic**, **Advanced**, and **Codex** views.
 - **GitHub**
   - Toggle **Public repo** on/off.
 - **Post-Create**
   - Optionally open in Xcode, open in Codex, open CLI in the project folder, reveal in Finder, and open Safari to the GitHub project.
+- **Codex Tab**
+  - Shows near-real-time quota status (5-hour usage, weekly usage, credits) from `~/.codex/sessions` rollout logs.
 - **Create**: Generates the project, bootstraps git, creates/pushes GitHub repo (if enabled), then opens in Xcode.
 - **Quit**: Terminates ProjectPilot.
 

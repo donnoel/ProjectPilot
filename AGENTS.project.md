@@ -21,6 +21,7 @@ We have a robust scaffold pipeline with quality-of-life UX:
 11) Failure diagnostics include an expandable details log panel with copy-to-clipboard support.
 12) The popover separates **Basic** vs **Advanced** sections and supports keyboard-first flows (Enter create, Cmd+R retry, Esc clear status).
 13) After a successful create, project form inputs reset to blank so the next scaffold starts clean.
+14) The popover includes a **Codex** balance tab that reads local Codex session rollout data and shows near-real-time 5-hour, weekly, and credit usage status.
 
 Current focus should be reliability, warning-free builds, and predictable generation behavior (especially honoring preset/platform intent).
 

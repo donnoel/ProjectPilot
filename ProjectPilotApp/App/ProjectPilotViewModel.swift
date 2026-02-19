@@ -92,6 +92,26 @@ final class ProjectPilotViewModel: ObservableObject {
         let message: String
     }
 
+    struct CodexQuotaSnapshot: Equatable {
+        struct UsageLimit: Equatable {
+            let usedPercent: Double
+            let remainingPercent: Double
+            let windowMinutes: Int
+            let resetAt: Date?
+        }
+
+        struct Credits: Equatable {
+            let hasCredits: Bool
+            let isUnlimited: Bool
+            let balance: Double?
+        }
+
+        let primary: UsageLimit?
+        let secondary: UsageLimit?
+        let credits: Credits?
+        let sourcePath: String
+    }
+
     @Published var projectName: String = ""
     @Published var selectedPlatforms: Set<Platform> = [.iOS] {
         didSet {
@@ -150,6 +170,12 @@ final class ProjectPilotViewModel: ObservableObject {
     @Published private(set) var hasFailureDetails: Bool = false
     @Published private(set) var pipelineStepStates: [PipelineStep: PipelineStepState] = ProjectPilotViewModel.defaultPipelineStepStates()
     @Published private(set) var lastCreatedProjectURL: URL? = nil
+    @Published private(set) var codexQuotaSnapshot: CodexQuotaSnapshot? = nil
+    @Published private(set) var codexQuotaLastUpdatedAt: Date? = nil
+    @Published private(set) var codexQuotaError: String? = nil
+
+    private let codexQuotaReader: CodexQuotaReader
+    private var codexQuotaPollingTask: Task<Void, Never>? = nil
 
     var canRetryGitHub: Bool {
         pendingGitHubRetryName != nil && pendingGitHubRetryPath != nil
@@ -246,8 +272,14 @@ final class ProjectPilotViewModel: ObservableObject {
         selectedPresetID.hasPrefix(Self.customPresetPrefix)
     }
 
-    init() {
+    init(codexQuotaReader: CodexQuotaReader = CodexQuotaReader()) {
+        self.codexQuotaReader = codexQuotaReader
         loadPersistedSettings()
+        startCodexQuotaPolling()
+    }
+
+    deinit {
+        codexQuotaPollingTask?.cancel()
     }
 
     func createProjectSkeleton() {
@@ -278,6 +310,10 @@ final class ProjectPilotViewModel: ObservableObject {
         detailLogs.removeAll()
         isDetailsExpanded = false
         hasFailureDetails = false
+    }
+
+    func refreshCodexQuota() {
+        Task { await refreshCodexQuotaAsync() }
     }
 
     func openLastCreatedProjectInXcode() {
@@ -366,6 +402,38 @@ final class ProjectPilotViewModel: ObservableObject {
         Task {
             await retryGitHubSetupAsync(name: name,
                                         projectURL: URL(fileURLWithPath: path, isDirectory: true))
+        }
+    }
+
+    // MARK: - Codex Quota
+
+    private func startCodexQuotaPolling() {
+        codexQuotaPollingTask?.cancel()
+        codexQuotaPollingTask = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshCodexQuotaAsync()
+
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(Self.codexQuotaPollIntervalSeconds))
+                } catch {
+                    break
+                }
+                await self.refreshCodexQuotaAsync()
+            }
+        }
+    }
+
+    private func refreshCodexQuotaAsync() async {
+        do {
+            let snapshot = try await codexQuotaReader.readLatestQuotaSnapshot()
+            codexQuotaSnapshot = snapshot
+            codexQuotaLastUpdatedAt = Date()
+            codexQuotaError = nil
+        } catch let error as CodexQuotaReader.ReadError {
+            codexQuotaError = error.localizedDescription
+        } catch {
+            codexQuotaError = "Unable to read Codex quota from local session data."
         }
     }
 
@@ -819,6 +887,95 @@ final class ProjectPilotViewModel: ObservableObject {
             return "Opening in \(targets[0]) and \(targets[1])…"
         }
         return "Opening in \(targets[0]), \(targets[1]), and \(targets[2])…"
+    }
+
+    nonisolated static func codexQuotaSnapshot(fromRolloutJSONLines text: String, sourcePath: String = "") -> CodexQuotaSnapshot? {
+        for rawLine in text.split(whereSeparator: \.isNewline).reversed() {
+            let line = String(rawLine)
+            guard line.contains("\"token_count\""), line.contains("\"rate_limits\"") else { continue }
+            guard let data = line.data(using: .utf8),
+                  let rawJSON = try? JSONSerialization.jsonObject(with: data),
+                  let event = rawJSON as? [String: Any],
+                  (event["type"] as? String) == "event_msg",
+                  let payload = event["payload"] as? [String: Any],
+                  (payload["type"] as? String) == "token_count",
+                  let rateLimits = payload["rate_limits"] as? [String: Any] else {
+                continue
+            }
+
+            return CodexQuotaSnapshot(
+                primary: codexUsageLimit(from: rateLimits["primary"] as? [String: Any]),
+                secondary: codexUsageLimit(from: rateLimits["secondary"] as? [String: Any]),
+                credits: codexCredits(from: rateLimits["credits"] as? [String: Any]),
+                sourcePath: sourcePath
+            )
+        }
+
+        return nil
+    }
+
+    nonisolated private static func codexUsageLimit(from usageWindow: [String: Any]?) -> CodexQuotaSnapshot.UsageLimit? {
+        guard let usageWindow else { return nil }
+        let usedPercent = clampedPercentage(codexDouble(from: usageWindow["used_percent"]) ?? 0)
+        let remainingPercent = clampedPercentage(100 - usedPercent)
+        let windowMinutes = max(0, codexInt(from: usageWindow["window_minutes"]) ?? 0)
+        let resetAt = codexDouble(from: usageWindow["resets_at"]).map { Date(timeIntervalSince1970: $0) }
+        return CodexQuotaSnapshot.UsageLimit(
+            usedPercent: usedPercent,
+            remainingPercent: remainingPercent,
+            windowMinutes: windowMinutes,
+            resetAt: resetAt
+        )
+    }
+
+    nonisolated private static func codexCredits(from credits: [String: Any]?) -> CodexQuotaSnapshot.Credits? {
+        guard let credits else { return nil }
+        return CodexQuotaSnapshot.Credits(
+            hasCredits: codexBool(from: credits["has_credits"]) ?? false,
+            isUnlimited: codexBool(from: credits["unlimited"]) ?? false,
+            balance: codexDouble(from: credits["balance"])
+        )
+    }
+
+    nonisolated private static func clampedPercentage(_ value: Double) -> Double {
+        min(100, max(0, value))
+    }
+
+    nonisolated private static func codexDouble(from value: Any?) -> Double? {
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        if let string = value as? String {
+            return Double(string)
+        }
+        return nil
+    }
+
+    nonisolated private static func codexInt(from value: Any?) -> Int? {
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let string = value as? String {
+            return Int(string)
+        }
+        return nil
+    }
+
+    nonisolated private static func codexBool(from value: Any?) -> Bool? {
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        if let string = value as? String {
+            switch string.lowercased() {
+            case "true", "1": return true
+            case "false", "0": return false
+            default: return nil
+            }
+        }
+        return nil
     }
 
     private func applySupportedPlatforms(to pbxproj: String) -> String {
@@ -1798,6 +1955,7 @@ Provide:
     }
 
     private static let codexBundleIdentifier = "com.openai.codex"
+    private static let codexQuotaPollIntervalSeconds: Double = 10
 
     private static func defaultPipelineStepStates() -> [PipelineStep: PipelineStepState] {
         var states: [PipelineStep: PipelineStepState] = [:]
@@ -2474,5 +2632,137 @@ Provide:
         let message: String
         init(_ message: String) { self.message = message }
         var errorDescription: String? { message }
+    }
+}
+
+actor CodexQuotaReader {
+    enum ReadError: LocalizedError {
+        case sessionsDirectoryMissing
+        case noRolloutFiles
+        case noQuotaData
+        case unreadableRolloutFile
+
+        var errorDescription: String? {
+            switch self {
+            case .sessionsDirectoryMissing:
+                return "Codex sessions folder not found at ~/.codex/sessions."
+            case .noRolloutFiles:
+                return "No Codex usage data found yet."
+            case .noQuotaData:
+                return "No Codex quota update found yet. Send a Codex message first."
+            case .unreadableRolloutFile:
+                return "Unable to read Codex usage data."
+            }
+        }
+    }
+
+    private let fileManager: FileManager
+    private let sessionsRootURL: URL
+
+    private var cachedRolloutURL: URL? = nil
+    private var cachedRolloutModificationDate: Date? = nil
+    private var cachedSnapshot: ProjectPilotViewModel.CodexQuotaSnapshot? = nil
+
+    init(fileManager: FileManager = .default, sessionsRootURL: URL? = nil) {
+        self.fileManager = fileManager
+        self.sessionsRootURL = sessionsRootURL ?? fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex", isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true)
+    }
+
+    func readLatestQuotaSnapshot() throws -> ProjectPilotViewModel.CodexQuotaSnapshot {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: sessionsRootURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw ReadError.sessionsDirectoryMissing
+        }
+
+        guard let (rolloutURL, modificationDate) = latestRolloutFile() else {
+            throw ReadError.noRolloutFiles
+        }
+
+        if rolloutURL == cachedRolloutURL,
+           modificationDate == cachedRolloutModificationDate,
+           let cachedSnapshot {
+            return cachedSnapshot
+        }
+
+        let rolloutTail = try readTail(of: rolloutURL, maxBytes: 128 * 1024)
+        guard let snapshot = ProjectPilotViewModel.codexQuotaSnapshot(fromRolloutJSONLines: rolloutTail,
+                                                                      sourcePath: rolloutURL.path) else {
+            throw ReadError.noQuotaData
+        }
+
+        cachedRolloutURL = rolloutURL
+        cachedRolloutModificationDate = modificationDate
+        cachedSnapshot = snapshot
+        return snapshot
+    }
+
+    private func latestRolloutFile() -> (URL, Date)? {
+        guard let enumerator = fileManager.enumerator(
+            at: sessionsRootURL,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        var bestMatch: (url: URL, modifiedAt: Date)? = nil
+
+        for case let fileURL as URL in enumerator {
+            guard fileURL.lastPathComponent.hasPrefix("rollout-"),
+                  fileURL.pathExtension == "jsonl" else {
+                continue
+            }
+
+            guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+                  values.isRegularFile == true else {
+                continue
+            }
+
+            let modifiedAt = values.contentModificationDate ?? .distantPast
+            if let currentBest = bestMatch {
+                if modifiedAt > currentBest.modifiedAt {
+                    bestMatch = (fileURL, modifiedAt)
+                }
+            } else {
+                bestMatch = (fileURL, modifiedAt)
+            }
+        }
+
+        guard let bestMatch else { return nil }
+        return (bestMatch.url, bestMatch.modifiedAt)
+    }
+
+    private func readTail(of fileURL: URL, maxBytes: Int) throws -> String {
+        let handle: FileHandle
+        do {
+            handle = try FileHandle(forReadingFrom: fileURL)
+        } catch {
+            throw ReadError.unreadableRolloutFile
+        }
+
+        defer { try? handle.close() }
+
+        let fileSize: UInt64
+        do {
+            fileSize = try handle.seekToEnd()
+        } catch {
+            throw ReadError.unreadableRolloutFile
+        }
+
+        let startOffset = fileSize > UInt64(maxBytes) ? fileSize - UInt64(maxBytes) : 0
+
+        do {
+            try handle.seek(toOffset: startOffset)
+        } catch {
+            throw ReadError.unreadableRolloutFile
+        }
+
+        let data = handle.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw ReadError.unreadableRolloutFile
+        }
+        return text
     }
 }
