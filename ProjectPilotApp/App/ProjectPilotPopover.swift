@@ -135,7 +135,6 @@ struct ProjectPilotPopover: View {
     private var advancedSections: some View {
         Group {
             templateSection
-            presetsSection
             postCreateSection
         }
     }
@@ -271,54 +270,6 @@ struct ProjectPilotPopover: View {
         }
     }
 
-    private var presetsSection: some View {
-        section("Presets") {
-            LabeledContent("Preset") {
-                Picker(
-                    "Preset",
-                    selection: Binding(
-                        get: { vm.selectedPresetID },
-                        set: { vm.selectPresetFromPicker($0) }
-                    )
-                ) {
-                    ForEach(vm.availablePresets) { preset in
-                        Text(preset.name).tag(preset.id)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .frame(maxWidth: 240)
-            }
-            .font(.subheadline)
-
-            HStack(spacing: 8) {
-                Button("Apply") {
-                    vm.applySelectedPreset()
-                }
-                .controlSize(.small)
-                .disabled(vm.isRunning)
-
-                Button("Delete") {
-                    vm.deleteSelectedPreset()
-                }
-                .controlSize(.small)
-                .disabled(vm.isRunning || !vm.canDeleteSelectedPreset)
-
-                Spacer(minLength: 0)
-            }
-
-            HStack(spacing: 8) {
-                TextField("Save current as preset", text: $vm.newPresetName)
-                    .textFieldStyle(.roundedBorder)
-
-                Button("Save") {
-                    vm.saveCurrentAsPreset()
-                }
-                .controlSize(.small)
-                .disabled(vm.isRunning || vm.newPresetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-    }
 
     private var postCreateSection: some View {
         section("Post-Create") {
