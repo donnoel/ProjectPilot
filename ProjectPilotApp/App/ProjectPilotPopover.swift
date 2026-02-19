@@ -551,6 +551,7 @@ struct ProjectPilotPopover: View {
             }
         }
         .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
     }
 
@@ -585,6 +586,7 @@ struct ProjectPilotPopover: View {
             }
         }
         .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
     }
 
