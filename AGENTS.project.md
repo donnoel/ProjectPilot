@@ -15,7 +15,7 @@ We have a robust scaffold pipeline with quality-of-life UX:
 5) Project location is user-selectable (not fixed to one directory), with persisted selection.
 6) Presets are supported (built-in + custom) and can store platforms, template profile, and GitHub visibility defaults.
 7) Template profiles are supported so users can scaffold from multiple golden starter variants.
-8) Post-create checklist actions include open in Xcode, reveal in Finder, and open Safari to the GitHub project page.
+8) Post-create checklist actions include open in Xcode, open in Codex, open CLI in the project folder, reveal in Finder, and open Safari to the GitHub project page.
 9) Inline validation hints appear before Create for project name (including requiring at least one letter or number).
 10) Creation progress is visible with a compact step timeline (Folder → Xcodeproj → Git → GitHub → Open).
 11) Failure diagnostics include an expandable details log panel with copy-to-clipboard support.

@@ -85,6 +85,16 @@ struct ProjectPilotTests {
     }
 
     @MainActor
+    @Test func openStepStatusMessageMatchesSelections() {
+        #expect(ProjectPilotViewModel.openStepStatusMessage(openInXcode: true, openInCodex: true, openInCLI: true) == "Opening in Xcode, Codex, and CLI…")
+        #expect(ProjectPilotViewModel.openStepStatusMessage(openInXcode: true, openInCodex: true, openInCLI: false) == "Opening in Xcode and Codex…")
+        #expect(ProjectPilotViewModel.openStepStatusMessage(openInXcode: true, openInCodex: false, openInCLI: false) == "Opening in Xcode…")
+        #expect(ProjectPilotViewModel.openStepStatusMessage(openInXcode: false, openInCodex: true, openInCLI: false) == "Opening in Codex…")
+        #expect(ProjectPilotViewModel.openStepStatusMessage(openInXcode: false, openInCodex: false, openInCLI: true) == "Opening in CLI…")
+        #expect(ProjectPilotViewModel.openStepStatusMessage(openInXcode: false, openInCodex: false, openInCLI: false) == nil)
+    }
+
+    @MainActor
     private func clearProjectPilotDefaults() {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("projectPilot.") {

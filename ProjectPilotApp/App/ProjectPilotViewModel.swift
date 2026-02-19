@@ -127,6 +127,8 @@ final class ProjectPilotViewModel: ObservableObject {
 
     /// Post-create checklist options.
     @Published var openInXcodeAfterCreate: Bool = true { didSet { persistPostCreateSettings() } }
+    @Published var openInCodexAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
+    @Published var openInCLIAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
     @Published var revealInFinderAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
     @Published var openGitHubRepoInSafariAfterCreate: Bool = false { didSet { persistPostCreateSettings() } }
 
@@ -441,9 +443,19 @@ final class ProjectPilotViewModel: ObservableObject {
                 appendDetailLog(.info, "Skipping GitHub repo step.")
             }
 
-            if openInXcodeAfterCreate {
-                try runPipelineStep(.open, statusMessage: "Opening in Xcode…") {
-                    try openInXcode(projectURL: projectURL)
+            if let openStatusMessage = Self.openStepStatusMessage(openInXcode: openInXcodeAfterCreate,
+                                                                  openInCodex: openInCodexAfterCreate,
+                                                                  openInCLI: openInCLIAfterCreate) {
+                try runPipelineStep(.open, statusMessage: openStatusMessage) {
+                    if openInXcodeAfterCreate {
+                        try openInXcode(projectURL: projectURL)
+                    }
+                    if openInCodexAfterCreate {
+                        try openInCodex(projectURL: projectURL)
+                    }
+                    if openInCLIAfterCreate {
+                        try openInCLI(projectURL: projectURL)
+                    }
                 }
             } else {
                 setPipelineStep(.open, to: .skipped)
@@ -791,6 +803,22 @@ final class ProjectPilotViewModel: ObservableObject {
             return "platform=iOS Simulator"
         }
         return "platform=tvOS Simulator"
+    }
+
+    static func openStepStatusMessage(openInXcode: Bool, openInCodex: Bool, openInCLI: Bool) -> String? {
+        var targets: [String] = []
+        if openInXcode { targets.append("Xcode") }
+        if openInCodex { targets.append("Codex") }
+        if openInCLI { targets.append("CLI") }
+
+        guard !targets.isEmpty else { return nil }
+        if targets.count == 1 {
+            return "Opening in \(targets[0])…"
+        }
+        if targets.count == 2 {
+            return "Opening in \(targets[0]) and \(targets[1])…"
+        }
+        return "Opening in \(targets[0]), \(targets[1]), and \(targets[2])…"
     }
 
     private func applySupportedPlatforms(to pbxproj: String) -> String {
@@ -1433,6 +1461,20 @@ Provide:
         _ = try run([ "/usr/bin/open", "-a", "Xcode", xcodeproj.path ])
     }
 
+    private func openInCodex(projectURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: projectURL.path) else {
+            throw PPError("Missing project folder at \(projectURL.lastPathComponent).")
+        }
+        _ = try run([ "/usr/bin/open", "-b", Self.codexBundleIdentifier, projectURL.path ])
+    }
+
+    private func openInCLI(projectURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: projectURL.path) else {
+            throw PPError("Missing project folder at \(projectURL.lastPathComponent).")
+        }
+        _ = try run([ "/usr/bin/open", "-a", "Terminal", projectURL.path ])
+    }
+
     private func revealInFinder(projectURL: URL) throws {
         _ = try run(["/usr/bin/open", "-R", projectURL.path])
     }
@@ -1645,6 +1687,12 @@ Provide:
         if defaults.object(forKey: Self.StorageKey.openInXcodeAfterCreate) != nil {
             openInXcodeAfterCreate = defaults.bool(forKey: Self.StorageKey.openInXcodeAfterCreate)
         }
+        if defaults.object(forKey: Self.StorageKey.openInCodexAfterCreate) != nil {
+            openInCodexAfterCreate = defaults.bool(forKey: Self.StorageKey.openInCodexAfterCreate)
+        }
+        if defaults.object(forKey: Self.StorageKey.openInCLIAfterCreate) != nil {
+            openInCLIAfterCreate = defaults.bool(forKey: Self.StorageKey.openInCLIAfterCreate)
+        }
         if defaults.object(forKey: Self.StorageKey.revealInFinderAfterCreate) != nil {
             revealInFinderAfterCreate = defaults.bool(forKey: Self.StorageKey.revealInFinderAfterCreate)
         }
@@ -1696,6 +1744,8 @@ Provide:
     private func persistPostCreateSettings() {
         let defaults = UserDefaults.standard
         defaults.set(openInXcodeAfterCreate, forKey: Self.StorageKey.openInXcodeAfterCreate)
+        defaults.set(openInCodexAfterCreate, forKey: Self.StorageKey.openInCodexAfterCreate)
+        defaults.set(openInCLIAfterCreate, forKey: Self.StorageKey.openInCLIAfterCreate)
         defaults.set(revealInFinderAfterCreate, forKey: Self.StorageKey.revealInFinderAfterCreate)
         defaults.set(openGitHubRepoInSafariAfterCreate, forKey: Self.StorageKey.openGitHubRepoInSafariAfterCreate)
     }
@@ -1722,11 +1772,15 @@ Provide:
         static let createGitHubRepo = "projectPilot.createGitHubRepo"
         static let createPublicGitHubRepo = "projectPilot.createPublicGitHubRepo"
         static let openInXcodeAfterCreate = "projectPilot.openInXcodeAfterCreate"
+        static let openInCodexAfterCreate = "projectPilot.openInCodexAfterCreate"
+        static let openInCLIAfterCreate = "projectPilot.openInCLIAfterCreate"
         static let revealInFinderAfterCreate = "projectPilot.revealInFinderAfterCreate"
         static let openGitHubRepoInSafariAfterCreate = "projectPilot.openGitHubRepoInSafariAfterCreate"
         static let customPresets = "projectPilot.customPresets"
         static let selectedPresetID = "projectPilot.selectedPresetID"
     }
+
+    private static let codexBundleIdentifier = "com.openai.codex"
 
     private static func defaultPipelineStepStates() -> [PipelineStep: PipelineStepState] {
         var states: [PipelineStep: PipelineStepState] = [:]

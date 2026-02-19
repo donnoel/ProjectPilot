@@ -47,7 +47,7 @@ It can also:
 - **GitHub**
   - Toggle **Public repo** on/off.
 - **Post-Create**
-  - Optionally open in Xcode, reveal in Finder, and open Safari to the GitHub project.
+  - Optionally open in Xcode, open in Codex, open CLI in the project folder, reveal in Finder, and open Safari to the GitHub project.
 - **Create**: Generates the project, bootstraps git, creates/pushes GitHub repo (if enabled), then opens in Xcode.
 - **Quit**: Terminates ProjectPilot.
 

@@ -283,6 +283,22 @@ struct ProjectPilotPopover: View {
                 Divider().opacity(0.20)
 
                 toggleSettingRow(
+                    title: "Open in Codex",
+                    subtitle: "Open the new project folder in the Codex app and add it as a workspace.",
+                    isOn: $vm.openInCodexAfterCreate
+                )
+
+                Divider().opacity(0.20)
+
+                toggleSettingRow(
+                    title: "Open CLI",
+                    subtitle: "Open Terminal in the new project folder so you can start coding immediately.",
+                    isOn: $vm.openInCLIAfterCreate
+                )
+
+                Divider().opacity(0.20)
+
+                toggleSettingRow(
                     title: "Reveal in Finder",
                     subtitle: "Open the project folder in Finder after create.",
                     isOn: $vm.revealInFinderAfterCreate
