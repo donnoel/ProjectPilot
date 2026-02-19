@@ -351,7 +351,7 @@ struct ProjectPilotPopover: View {
                 Divider().opacity(0.20)
 
                 toggleSettingRow(
-                    title: "Reveal in Finder",
+                    title: "Open in Finder",
                     subtitle: "Open the project folder in Finder after create.",
                     isOn: $vm.revealInFinderAfterCreate
                 )
