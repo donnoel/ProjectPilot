@@ -10,6 +10,7 @@ struct ProjectPilotPopover: View {
         case basic = "Basic"
         case advanced = "Advanced"
         case codex = "Codex"
+        case github = "GitHub"
 
         var id: String { rawValue }
     }
@@ -21,7 +22,7 @@ struct ProjectPilotPopover: View {
             VStack(alignment: .leading, spacing: 10) {
                 header
                 modePicker
-                if mode != .codex {
+                if mode != .codex && mode != .github {
                     progressTimeline
                 }
 
@@ -32,6 +33,8 @@ struct ProjectPilotPopover: View {
                     advancedSections
                 case .codex:
                     codexSections
+                case .github:
+                    githubSections
                 }
 
                 feedbackSection
@@ -187,6 +190,51 @@ struct ProjectPilotPopover: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+        }
+    }
+
+    private var githubSections: some View {
+        section("GitHub") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Repositories")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Repo listing and sync status will appear here.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        // Implement in ProjectPilotViewModel: refresh GitHub repo list + sync status.
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .controlSize(.small)
+                    .disabled(true)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Coming next")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text("• Show all local projects with a GitHub remote")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("• Compare local main vs remote branch (ahead/behind)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("• Delete repo and toggle visibility public/private")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
             }
         }
     }
@@ -716,6 +764,25 @@ struct ProjectPilotPopover: View {
     }
 }
 
+private struct VisualEffectView: NSViewRepresentable {
+    let material: NSVisualEffectView.Material
+    let blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
+        nsView.state = .active
+    }
+}
+
 private struct GlassBackground: View {
     var body: some View {
         ZStack {
@@ -837,21 +904,3 @@ private extension View {
     }
 }
 
-private struct VisualEffectView: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-        nsView.state = .active
-    }
-}
