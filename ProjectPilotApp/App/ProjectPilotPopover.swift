@@ -5,6 +5,8 @@ struct ProjectPilotPopover: View {
     @ObservedObject var vm: ProjectPilotViewModel
 
     @State private var mode: Mode = .basic
+    @State private var pendingRepoDelete: ProjectPilotViewModel.GitHubRepo? = nil
+    @State private var pendingVisibilityChange: (repo: ProjectPilotViewModel.GitHubRepo, makePrivate: Bool)? = nil
 
     enum Mode: String, CaseIterable, Identifiable {
         case basic = "Basic"
@@ -47,6 +49,11 @@ struct ProjectPilotPopover: View {
             .padding(14)
         }
         .frame(width: 520, alignment: .topLeading)
+        .onChange(of: mode) { _, newValue in
+            if newValue == .github {
+                vm.ensureGitHubReposLoaded()
+            }
+        }
     }
 
     private var header: some View {
@@ -201,42 +208,213 @@ struct ProjectPilotPopover: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Repositories")
                             .font(.subheadline.weight(.semibold))
-                        Text("Repo listing and sync status will appear here.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if let updatedAt = vm.githubReposLastUpdatedAt {
+                            Text("Updated \(updatedAt.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Fetch your repos via GitHub CLI.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     Spacer(minLength: 0)
 
                     Button {
-                        // Implement in ProjectPilotViewModel: refresh GitHub repo list + sync status.
+                        vm.refreshGitHubRepos()
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                     .controlSize(.small)
-                    .disabled(true)
+                    .disabled(vm.isRefreshingGitHubRepos)
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Coming next")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    Text("• Show all local projects with a GitHub remote")
+                if let message = vm.githubReposError {
+                    Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("• Compare local main vs remote branch (ahead/behind)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("• Delete repo and toggle visibility public/private")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
+
+                if vm.githubRepos.isEmpty {
+                    Text("No repos loaded yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            ForEach(vm.githubRepos) { repo in
+                                githubRepoRow(repo)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .frame(maxHeight: 230)
+                }
             }
         }
+        .onAppear {
+            vm.ensureGitHubReposLoaded()
+        }
+        .alert("Delete repo?", isPresented: Binding(
+            get: { pendingRepoDelete != nil },
+            set: { if !$0 { pendingRepoDelete = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                guard let repo = pendingRepoDelete else { return }
+                pendingRepoDelete = nil
+                vm.deleteGitHubRepo(repo)
+            }
+            Button("Cancel", role: .cancel) {
+                pendingRepoDelete = nil
+            }
+        } message: {
+            if let repo = pendingRepoDelete {
+                Text("This will permanently delete \(repo.nameWithOwner) on GitHub.")
+            } else {
+                Text("")
+            }
+        }
+        .alert("Change visibility?", isPresented: Binding(
+            get: { pendingVisibilityChange != nil },
+            set: { if !$0 { pendingVisibilityChange = nil } }
+        )) {
+            Button("Confirm") {
+                guard let change = pendingVisibilityChange else { return }
+                pendingVisibilityChange = nil
+                vm.setGitHubRepoVisibility(change.repo, isPrivate: change.makePrivate)
+            }
+            Button("Cancel", role: .cancel) {
+                pendingVisibilityChange = nil
+            }
+        } message: {
+            if let change = pendingVisibilityChange {
+                Text("Set \(change.repo.nameWithOwner) to \(change.makePrivate ? "private" : "public")?")
+            } else {
+                Text("")
+            }
+        }
+    }
+
+    private func githubRepoRow(_ repo: ProjectPilotViewModel.GitHubRepo) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(repo.nameWithOwner)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    HStack(spacing: 8) {
+                        Text(repo.isPrivate ? "Private" : "Public")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(.white.opacity(0.10))
+                            )
+
+                        syncStatusBadge(for: repo)
+
+                        if let updatedAt = repo.updatedAt {
+                            Text("Updated \(updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    if let url = URL(string: repo.url) {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    Image(systemName: "safari")
+                }
+                .buttonStyle(.borderless)
+                .help("Open in browser")
+            }
+
+            HStack(spacing: 8) {
+                Button {
+                    pendingVisibilityChange = (repo: repo, makePrivate: !repo.isPrivate)
+                } label: {
+                    Label(repo.isPrivate ? "Make Public" : "Make Private", systemImage: "lock")
+                }
+                .controlSize(.small)
+
+                Button(role: .destructive) {
+                    pendingRepoDelete = repo
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+                .controlSize(.small)
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
+    }
+
+    private func syncStatusBadge(for repo: ProjectPilotViewModel.GitHubRepo) -> some View {
+        guard let status = vm.githubRepoSyncStatus[repo.id] else { return AnyView(EmptyView()) }
+
+        let text: String
+        switch status.state {
+        case .checking:
+            text = "Sync: Checking"
+        case .notLocal:
+            text = "Sync: No local"
+        case .inSync:
+            text = "Sync: Up to date"
+        case .ahead(let count):
+            text = "Sync: Ahead \(count)"
+        case .behind(let count):
+            text = "Sync: Behind \(count)"
+        case .diverged(let ahead, let behind):
+            text = "Sync: \(ahead)↑ \(behind)↓"
+        case .error:
+            text = "Sync: Error"
+        }
+
+        return AnyView(
+            Text(text)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.10))
+                )
+                .help(syncHelpText(for: status))
+        )
+    }
+
+    private func syncHelpText(for status: ProjectPilotViewModel.RepoSyncStatus) -> String {
+        var parts: [String] = []
+        if let path = status.localPath {
+            parts.append("Local: \(path)")
+        }
+
+        switch status.state {
+        case .error(let message):
+            parts.append(message)
+        default:
+            break
+        }
+
+        parts.append("Checked \(status.checkedAt.formatted(date: .omitted, time: .shortened))")
+        return parts.joined(separator: "\n")
     }
 
     private var projectSection: some View {

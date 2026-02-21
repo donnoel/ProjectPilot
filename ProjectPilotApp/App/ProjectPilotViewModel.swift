@@ -2,6 +2,12 @@ import Combine
 import Foundation
 import AppKit
 
+private struct PPCLIError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
+}
+
 @MainActor
 final class ProjectPilotViewModel: ObservableObject {
     enum Platform: String, CaseIterable, Identifiable, Codable {
@@ -174,6 +180,38 @@ final class ProjectPilotViewModel: ObservableObject {
     @Published private(set) var codexQuotaLastUpdatedAt: Date? = nil
     @Published private(set) var codexQuotaError: String? = nil
 
+    struct GitHubRepo: Identifiable, Equatable {
+        let nameWithOwner: String
+        let url: String
+        let isPrivate: Bool
+        let updatedAt: Date?
+
+        var id: String { nameWithOwner }
+    }
+
+    @Published private(set) var githubRepos: [GitHubRepo] = []
+    @Published private(set) var githubReposLastUpdatedAt: Date? = nil
+    @Published private(set) var githubReposError: String? = nil
+    @Published private(set) var isRefreshingGitHubRepos: Bool = false
+
+    struct RepoSyncStatus: Equatable {
+        enum State: Equatable {
+            case notLocal
+            case checking
+            case inSync
+            case ahead(Int)
+            case behind(Int)
+            case diverged(ahead: Int, behind: Int)
+            case error(String)
+        }
+
+        let state: State
+        let localPath: String?
+        let checkedAt: Date
+    }
+
+    @Published private(set) var githubRepoSyncStatus: [String: RepoSyncStatus] = [:]
+
     private let codexQuotaReader: CodexQuotaReader
     private var codexQuotaPollingTask: Task<Void, Never>? = nil
 
@@ -316,6 +354,24 @@ final class ProjectPilotViewModel: ObservableObject {
         Task { await refreshCodexQuotaAsync() }
     }
 
+    func refreshGitHubRepos() {
+        Task { await refreshGitHubReposAsync() }
+    }
+
+    func ensureGitHubReposLoaded() {
+        guard !isRefreshingGitHubRepos else { return }
+        guard githubReposLastUpdatedAt == nil || githubRepos.isEmpty else { return }
+        refreshGitHubRepos()
+    }
+
+    func setGitHubRepoVisibility(_ repo: GitHubRepo, isPrivate: Bool) {
+        Task { await setGitHubRepoVisibilityAsync(repo, isPrivate: isPrivate) }
+    }
+
+    func deleteGitHubRepo(_ repo: GitHubRepo) {
+        Task { await deleteGitHubRepoAsync(repo) }
+    }
+
     func openLastCreatedProjectInXcode() {
         guard let projectURL = lastCreatedProjectURL else { return }
         do {
@@ -434,6 +490,281 @@ final class ProjectPilotViewModel: ObservableObject {
             codexQuotaError = error.localizedDescription
         } catch {
             codexQuotaError = "Unable to read Codex quota from local session data."
+        }
+    }
+
+    // MARK: - GitHub Repos
+
+    private struct GHRepoListItem: Decodable {
+        let nameWithOwner: String
+        let url: String
+        let isPrivate: Bool
+        let updatedAt: Date?
+    }
+
+    private func refreshGitHubReposAsync() async {
+        guard !isRefreshingGitHubRepos else { return }
+        isRefreshingGitHubRepos = true
+        defer { isRefreshingGitHubRepos = false }
+
+        githubReposError = nil
+
+        do {
+            let repos = try await Task.detached(priority: .utility) { [weak self] in
+                guard self != nil else { return [GitHubRepo]() }
+
+                // Ensure auth is valid (gives clear error early).
+                let gh = Self.resolvedGHCommandPrefixStatic()
+                _ = try Self.runProcess(gh + ["auth", "status"])
+
+                let out = try Self.runProcess(
+                    gh + [
+                        "repo", "list",
+                        "--limit", "200",
+                        "--json", "nameWithOwner,url,isPrivate,updatedAt"
+                    ]
+                )
+
+                let data = Data(out.utf8)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let decoded = try decoder.decode([GHRepoListItem].self, from: data)
+                return decoded.map { item in
+                    GitHubRepo(
+                        nameWithOwner: item.nameWithOwner,
+                        url: item.url,
+                        isPrivate: item.isPrivate,
+                        updatedAt: item.updatedAt
+                    )
+                }.sorted { lhs, rhs in
+                    lhs.nameWithOwner.localizedCaseInsensitiveCompare(rhs.nameWithOwner) == .orderedAscending
+                }
+            }.value
+
+            githubRepos = repos
+            githubReposLastUpdatedAt = Date()
+            githubRepoSyncStatus = repos.reduce(into: [:]) { dict, repo in
+                dict[repo.id] = RepoSyncStatus(state: .checking, localPath: nil, checkedAt: Date())
+            }
+            Task { await refreshGitHubRepoSyncStatusAsync(for: repos) }
+            setStatus(.success, "Loaded \(repos.count) GitHub repos.")
+        } catch {
+            githubReposError = error.localizedDescription
+            setStatus(.error, "GitHub refresh failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func refreshGitHubRepoSyncStatusAsync(for repos: [GitHubRepo]) async {
+        let rootURL = projectRootURL.standardizedFileURL
+        let results = await Task.detached(priority: .utility) {
+            repos.reduce(into: [String: RepoSyncStatus]()) { dict, repo in
+                dict[repo.id] = Self.computeSyncStatusStatic(repo: repo, projectRootURL: rootURL)
+            }
+        }.value
+        githubRepoSyncStatus = results
+    }
+
+    private nonisolated static func resolveLocalRepoURLStatic(repoName: String, projectRootURL: URL) -> URL {
+        // Canonical convention (per Don): local clones live at:
+        //   ~/Development/<RepoName>
+        // Example: ~/Development/Sift, ~/Development/Loom
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Development", isDirectory: true)
+            .appendingPathComponent(repoName, isDirectory: true)
+    }
+
+    private nonisolated static func computeSyncStatusStatic(repo: GitHubRepo, projectRootURL: URL) -> RepoSyncStatus {
+        let checkedAt = Date()
+        let repoName = repo.nameWithOwner.split(separator: "/").last.map(String.init) ?? repo.nameWithOwner
+
+        // Local clones follow the convention: ~/Development/<RepoName>
+        // `resolveLocalRepoURLStatic` also provides a legacy fallback to the configured project root.
+        let localURL = resolveLocalRepoURLStatic(repoName: repoName, projectRootURL: projectRootURL)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: localURL.path, isDirectory: &isDir), isDir.boolValue else {
+            return RepoSyncStatus(state: .notLocal, localPath: nil, checkedAt: checkedAt)
+        }
+
+        let localPathDisplay = (localURL.path as NSString).abbreviatingWithTildeInPath
+
+        let dotGit = localURL.appendingPathComponent(".git")
+        guard FileManager.default.fileExists(atPath: dotGit.path) else {
+            return RepoSyncStatus(state: .notLocal, localPath: localPathDisplay, checkedAt: checkedAt)
+        }
+
+        do {
+            func step<T>(_ label: String, _ work: () throws -> T) throws -> T {
+                do {
+                    return try work()
+                } catch {
+                    // Surface where we failed (most errors are PPCLIError with a useful message).
+                    throw PPCLIError(message: "\(label) failed: \(error.localizedDescription)")
+                }
+            }
+
+            // Ensure we're a git repo.
+            _ = try step("git rev-parse") {
+                try runProcess(["/usr/bin/git", "rev-parse", "--is-inside-work-tree"], cwd: localURL)
+            }
+
+            // Must have local main.
+            _ = try step("verify local main") {
+                try runProcess(["/usr/bin/git", "show-ref", "--verify", "refs/heads/main"], cwd: localURL)
+            }
+
+            // Convention: remote name "github".
+            let remotesOut = try step("list remotes") {
+                try runProcess(["/usr/bin/git", "remote"], cwd: localURL)
+            }
+            let remotes = remotesOut
+                .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+                .map(String.init)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            guard !remotes.isEmpty else {
+                return RepoSyncStatus(state: .error("No git remotes found."), localPath: localPathDisplay, checkedAt: checkedAt)
+            }
+
+            // Prefer the ProjectPilot convention remote name ("github"), but many local clones
+            // still use the default remote name ("origin"). Both are valid.
+            let remoteName: String
+            if remotes.contains("github") {
+                remoteName = "github"
+            } else if remotes.contains("origin") {
+                remoteName = "origin"
+            } else {
+                remoteName = remotes[0]
+            }
+
+            _ = try step("remote get-url \(remoteName)") {
+                try runProcess(["/usr/bin/git", "remote", "get-url", remoteName], cwd: localURL)
+            }
+
+            _ = try step("git fetch \(remoteName)") {
+                try runProcess(["/usr/bin/git", "fetch", remoteName, "--prune"], cwd: localURL)
+            }
+
+            let remoteRefsOut = try step("list remote refs") {
+                try runProcess([
+                    "/usr/bin/git", "for-each-ref",
+                    "--format=%(refname:short)",
+                    "refs/remotes/\(remoteName)/"
+                ], cwd: localURL)
+            }
+
+            let remoteRefs = remoteRefsOut
+                .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+                .map(String.init)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            guard !remoteRefs.isEmpty else {
+                return RepoSyncStatus(state: .error("No remote branches found on \"\(remoteName)\"."), localPath: localPathDisplay, checkedAt: checkedAt)
+            }
+
+            // Convention: local branch is "main". Remote branch is typically "github".
+            // Be tolerant if a repo still has a remote "main" branch.
+            let preferredCompareRef = "\(remoteName)/github"
+            let fallbackCompareRef = "\(remoteName)/main"
+
+            let compareRef: String
+            if remoteRefs.contains(preferredCompareRef) {
+                compareRef = preferredCompareRef
+            } else if remoteRefs.contains(fallbackCompareRef) {
+                compareRef = fallbackCompareRef
+            } else {
+                return RepoSyncStatus(
+                    state: .error("Missing remote branch \"github\" (or \"main\") on remote \"\(remoteName)\"."),
+                    localPath: localPathDisplay,
+                    checkedAt: checkedAt
+                )
+            }
+
+            let countsOut = try step("rev-list counts") {
+                try runProcess([
+                    "/usr/bin/git", "rev-list", "--left-right", "--count",
+                    "main...\(compareRef)"
+                ], cwd: localURL)
+            }
+
+            let trimmed = countsOut.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = trimmed
+                .split(whereSeparator: { $0 == "\t" || $0 == " " })
+                .map(String.init)
+
+            guard parts.count >= 2,
+                  let ahead = Int(parts[0]),
+                  let behind = Int(parts[1]) else {
+                return RepoSyncStatus(state: .error("Unable to read sync status."), localPath: localPathDisplay, checkedAt: checkedAt)
+            }
+
+            if ahead == 0 && behind == 0 {
+                return RepoSyncStatus(state: .inSync, localPath: localPathDisplay, checkedAt: checkedAt)
+            }
+            if ahead > 0 && behind == 0 {
+                return RepoSyncStatus(state: .ahead(ahead), localPath: localPathDisplay, checkedAt: checkedAt)
+            }
+            if ahead == 0 && behind > 0 {
+                return RepoSyncStatus(state: .behind(behind), localPath: localPathDisplay, checkedAt: checkedAt)
+            }
+            return RepoSyncStatus(state: .diverged(ahead: ahead, behind: behind), localPath: localPathDisplay, checkedAt: checkedAt)
+        } catch let error as PPCLIError {
+            return RepoSyncStatus(state: .error(error.message), localPath: localPathDisplay, checkedAt: checkedAt)
+        } catch {
+            return RepoSyncStatus(state: .error(error.localizedDescription), localPath: localPathDisplay, checkedAt: checkedAt)
+        }
+    }
+
+    private func setGitHubRepoVisibilityAsync(_ repo: GitHubRepo, isPrivate: Bool) async {
+        do {
+            let updatedRepo = try await Task.detached(priority: .utility) { [weak self] in
+                guard self != nil else { return repo }
+                let gh = Self.resolvedGHCommandPrefixStatic()
+                _ = try Self.runProcess(gh + [
+                    "repo", "edit", repo.nameWithOwner,
+                    "--visibility", isPrivate ? "private" : "public",
+                    "--accept-visibility-change"
+                ])
+
+                let out = try Self.runProcess(gh + [
+                    "repo", "view", repo.nameWithOwner,
+                    "--json", "nameWithOwner,url,isPrivate,updatedAt"
+                ])
+                let data = Data(out.utf8)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let item = try decoder.decode(GHRepoListItem.self, from: data)
+                return GitHubRepo(
+                    nameWithOwner: item.nameWithOwner,
+                    url: item.url,
+                    isPrivate: item.isPrivate,
+                    updatedAt: item.updatedAt
+                )
+            }.value
+
+            if let index = githubRepos.firstIndex(where: { $0.id == repo.id }) {
+                githubRepos[index] = updatedRepo
+            }
+            setStatus(.success, "Updated visibility for \(repo.nameWithOwner).")
+        } catch {
+            setStatus(.error, "Visibility update failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func deleteGitHubRepoAsync(_ repo: GitHubRepo) async {
+        do {
+            try await Task.detached(priority: .utility) { [weak self] in
+                guard self != nil else { return }
+                let gh = Self.resolvedGHCommandPrefixStatic()
+                _ = try Self.runProcess(gh + ["repo", "delete", repo.nameWithOwner, "--yes"])
+            }.value
+
+            githubRepos.removeAll { $0.id == repo.id }
+            githubRepoSyncStatus.removeValue(forKey: repo.id)
+            setStatus(.success, "Deleted \(repo.nameWithOwner).")
+        } catch {
+            setStatus(.error, "Delete failed: \(error.localizedDescription)")
         }
     }
 
@@ -1400,7 +1731,6 @@ struct ContentView: View {
 - [ ] Define app goals and core flows
 - [ ] Add real UI and data model
 - [ ] Add tests for key behaviors
-
 ## Credits
 Created with **ProjectPilot**.
 """
@@ -1540,7 +1870,7 @@ Provide:
             // We avoid guessing owner/org; `gh repo view <name>` resolves against your authenticated user.
             let sshURL: String
             do {
-                sshURL = try runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "sshUrl", "-q", ".sshUrl"]) 
+                sshURL = try runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "sshUrl", "-q", ".sshUrl"])
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             } catch {
                 throw PPError("GitHub repo create failed for '\(repoName)'. Make sure you're logged into GitHub CLI (run: gh auth login) and that the repo name is valid.")
@@ -1744,6 +2074,55 @@ Provide:
 
         if !outTrimmed.isEmpty {
             appendDetailLog(.info, outTrimmed)
+        }
+
+        return outStr
+    }
+
+    // MARK: - Non-UI process helpers
+
+    private nonisolated static func resolvedGHCommandPrefixStatic() -> [String] {
+        let candidates = [
+            "/opt/homebrew/bin/gh",
+            "/usr/local/bin/gh",
+            "/usr/bin/gh"
+        ]
+        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
+            return [path]
+        }
+
+        // Fallback: PATH resolution via env.
+        return ["/usr/bin/env", "gh"]
+    }
+
+    private nonisolated static func runProcess(_ argv: [String], cwd: URL? = nil) throws -> String {
+        guard let exe = argv.first else { throw PPCLIError(message: "Invalid command.") }
+        let args = Array(argv.dropFirst())
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: exe)
+        process.arguments = args
+        if let cwd { process.currentDirectoryURL = cwd }
+
+        let out = Pipe()
+        let err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+
+        try process.run()
+        process.waitUntilExit()
+
+        let outData = out.fileHandleForReading.readDataToEndOfFile()
+        let errData = err.fileHandleForReading.readDataToEndOfFile()
+
+        let outStr = String(data: outData, encoding: .utf8) ?? ""
+        let errStr = String(data: errData, encoding: .utf8) ?? ""
+        let outTrimmed = outStr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let errTrimmed = errStr.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if process.terminationStatus != 0 {
+            let msg = errTrimmed.isEmpty ? outTrimmed : errTrimmed
+            throw PPCLIError(message: msg.isEmpty ? "Command failed: \(exe) \(args.joined(separator: " "))" : msg)
         }
 
         return outStr
@@ -2766,3 +3145,4 @@ actor CodexQuotaReader {
         return text
     }
 }
+
