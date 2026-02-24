@@ -5,13 +5,8 @@ struct ProjectPilotPopover: View {
     @ObservedObject var vm: ProjectPilotViewModel
 
     @State private var mode: Mode = .basic
-    @State private var pendingRepoDelete: ProjectPilotViewModel.GitHubRepo? = nil
-    struct VisibilityChange {
-        let repo: ProjectPilotViewModel.GitHubRepo
-        let makePrivate: Bool
-    }
-
-    @State private var pendingVisibilityChange: VisibilityChange? = nil
+    @State private var confirmingDeleteRepo: ProjectPilotViewModel.GitHubRepo? = nil
+    @State private var confirmingVisibilityRepo: ProjectPilotViewModel.GitHubRepo? = nil
 
     enum Mode: String, CaseIterable, Identifiable {
         case basic = "Basic"
@@ -265,34 +260,6 @@ struct ProjectPilotPopover: View {
         .onAppear {
             vm.ensureGitHubReposLoaded()
         }
-        .alert("Delete repo?", isPresented: Binding(
-            get: { pendingRepoDelete != nil },
-            set: { if !$0 { pendingRepoDelete = nil } }
-        ), presenting: pendingRepoDelete) { repo in
-            Button("Delete", role: .destructive) {
-                pendingRepoDelete = nil
-                vm.deleteGitHubRepo(repo)
-            }
-            Button("Cancel", role: .cancel) {
-                pendingRepoDelete = nil
-            }
-        } message: { repo in
-            Text("This will permanently delete \(repo.nameWithOwner) on GitHub.")
-        }
-        .alert("Change visibility?", isPresented: Binding(
-            get: { pendingVisibilityChange != nil },
-            set: { if !$0 { pendingVisibilityChange = nil } }
-        ), presenting: pendingVisibilityChange) { change in
-            Button("Confirm") {
-                pendingVisibilityChange = nil
-                vm.setGitHubRepoVisibility(change.repo, isPrivate: change.makePrivate)
-            }
-            Button("Cancel", role: .cancel) {
-                pendingVisibilityChange = nil
-            }
-        } message: { change in
-            Text("Set \(change.repo.nameWithOwner) to \(change.makePrivate ? "private" : "public")?")
-        }
     }
 
     private func githubRepoRow(_ repo: ProjectPilotViewModel.GitHubRepo) -> some View {
@@ -338,22 +305,56 @@ struct ProjectPilotPopover: View {
                 .help("Open in browser")
             }
 
-            HStack(spacing: 8) {
-                Button {
-                    pendingVisibilityChange = VisibilityChange(repo: repo, makePrivate: !repo.isPrivate)
-                } label: {
-                    Label(repo.isPrivate ? "Make Public" : "Make Private", systemImage: "lock")
+            if confirmingDeleteRepo?.id == repo.id {
+                HStack(spacing: 8) {
+                    Text("Permanently delete?")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Delete", role: .destructive) {
+                        confirmingDeleteRepo = nil
+                        vm.deleteGitHubRepo(repo)
+                    }
+                    .controlSize(.small)
+                    Button("Cancel") {
+                        confirmingDeleteRepo = nil
+                    }
+                    .controlSize(.small)
+                    Spacer(minLength: 0)
                 }
-                .controlSize(.small)
-
-                Button(role: .destructive) {
-                    pendingRepoDelete = repo
-                } label: {
-                    Label("Delete", systemImage: "trash")
+            } else if confirmingVisibilityRepo?.id == repo.id {
+                HStack(spacing: 8) {
+                    Text("Make \(repo.isPrivate ? "public" : "private")?")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Confirm") {
+                        confirmingVisibilityRepo = nil
+                        vm.setGitHubRepoVisibility(repo, isPrivate: !repo.isPrivate)
+                    }
+                    .controlSize(.small)
+                    Button("Cancel") {
+                        confirmingVisibilityRepo = nil
+                    }
+                    .controlSize(.small)
+                    Spacer(minLength: 0)
                 }
-                .controlSize(.small)
+            } else {
+                HStack(spacing: 8) {
+                    Button {
+                        confirmingVisibilityRepo = repo
+                    } label: {
+                        Label(repo.isPrivate ? "Make Public" : "Make Private", systemImage: "lock")
+                    }
+                    .controlSize(.small)
 
-                Spacer(minLength: 0)
+                    Button(role: .destructive) {
+                        confirmingDeleteRepo = repo
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .controlSize(.small)
+
+                    Spacer(minLength: 0)
+                }
             }
         }
         .padding(10)

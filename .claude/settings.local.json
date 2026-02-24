@@ -9,7 +9,8 @@
       "Bash(/opt/homebrew/bin/gh auth status:*)",
       "Bash(/opt/homebrew/bin/gh repo delete:*)",
       "Bash(echo:*)",
-      "Bash(sips:*)"
+      "Bash(sips:*)",
+      "Bash(/opt/homebrew/bin/gh repo list:*)"
     ]
   }
 }
