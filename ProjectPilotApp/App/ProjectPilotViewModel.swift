@@ -299,7 +299,7 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     var hasValidationErrors: Bool {
-        isProjectNameInvalid
+        isProjectNameInvalid || isIOSBundleInvalid || isMacOSBundleInvalid || isTVOSBundleInvalid
     }
 
     var availablePresets: [CreationPreset] {
@@ -374,19 +374,23 @@ final class ProjectPilotViewModel: ObservableObject {
 
     func openLastCreatedProjectInXcode() {
         guard let projectURL = lastCreatedProjectURL else { return }
-        do {
-            try openInXcode(projectURL: projectURL)
-        } catch {
-            setStatus(.error, error.localizedDescription)
+        Task {
+            do {
+                try await openInXcode(projectURL: projectURL)
+            } catch {
+                setStatus(.error, error.localizedDescription)
+            }
         }
     }
 
     func revealLastCreatedProjectInFinder() {
         guard let projectURL = lastCreatedProjectURL else { return }
-        do {
-            try revealInFinder(projectURL: projectURL)
-        } catch {
-            setStatus(.error, error.localizedDescription)
+        Task {
+            do {
+                try await revealInFinder(projectURL: projectURL)
+            } catch {
+                setStatus(.error, error.localizedDescription)
+            }
         }
     }
 
@@ -718,8 +722,7 @@ final class ProjectPilotViewModel: ObservableObject {
 
     private func setGitHubRepoVisibilityAsync(_ repo: GitHubRepo, isPrivate: Bool) async {
         do {
-            let updatedRepo = try await Task.detached(priority: .utility) { [weak self] in
-                guard self != nil else { return repo }
+            let updatedRepo = try await Task.detached(priority: .utility) {
                 let gh = Self.resolvedGHCommandPrefixStatic()
                 _ = try Self.runProcess(gh + [
                     "repo", "edit", repo.nameWithOwner,
@@ -754,8 +757,7 @@ final class ProjectPilotViewModel: ObservableObject {
 
     private func deleteGitHubRepoAsync(_ repo: GitHubRepo) async {
         do {
-            try await Task.detached(priority: .utility) { [weak self] in
-                guard self != nil else { return }
+            try await Task.detached(priority: .utility) {
                 let gh = Self.resolvedGHCommandPrefixStatic()
                 _ = try Self.runProcess(gh + ["repo", "delete", repo.nameWithOwner, "--yes"])
             }.value
@@ -764,7 +766,12 @@ final class ProjectPilotViewModel: ObservableObject {
             githubRepoSyncStatus.removeValue(forKey: repo.id)
             setStatus(.success, "Deleted \(repo.nameWithOwner).")
         } catch {
-            setStatus(.error, "Delete failed: \(error.localizedDescription)")
+            let description = error.localizedDescription
+            if description.contains("delete_repo") {
+                setStatus(.error, "Missing delete_repo scope. Run: gh auth refresh -s delete_repo")
+            } else {
+                setStatus(.error, "Delete failed: \(description)")
+            }
         }
     }
 
@@ -800,27 +807,27 @@ final class ProjectPilotViewModel: ObservableObject {
             clearPendingGitHubRetry()
             lastCreatedGitHubRepoURL = nil
 
-            try runPipelineStep(.folder, statusMessage: "Creating folder…") {
+            try await runPipelineStep(.folder, statusMessage: "Creating folder…") {
                 try createFolder(projectURL)
             }
 
-            try runPipelineStep(.xcodeproj, statusMessage: "Generating Xcode project…") {
+            try await runPipelineStep(.xcodeproj, statusMessage: "Generating Xcode project…") {
                 let typeName = sanitizeTypeName(name)
                 try createXcodeProjectFromTemplate(projectName: typeName,
                                                    at: projectURL,
                                                    templateProfile: templateProfile)
             }
 
-            try runPipelineStep(.git, statusMessage: "Initializing git…") {
+            try await runPipelineStep(.git, statusMessage: "Initializing git…") {
                 // Git ignore (before first commit).
                 try writeGitignoreIfNeeded(at: projectURL)
 
                 // Ensure the local default branch is `main`.
                 // (`git init -b main` is supported on modern Git; we still defensively rename below.)
-                _ = try runInDirectory(projectURL, ["/usr/bin/git", "init", "-b", "main"])
-                _ = try? runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
-                _ = try runInDirectory(projectURL, ["/usr/bin/git", "add", "-A"])
-                _ = try? runInDirectory(projectURL, ["/usr/bin/git", "commit", "-m", "Initial commit"])
+                _ = try await runInDirectory(projectURL, ["/usr/bin/git", "init", "-b", "main"])
+                _ = try? await runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
+                _ = try await runInDirectory(projectURL, ["/usr/bin/git", "add", "-A"])
+                _ = try? await runInDirectory(projectURL, ["/usr/bin/git", "commit", "-m", "Initial commit"])
             }
 
             var gitHubErrorMessage: String? = nil
@@ -828,8 +835,8 @@ final class ProjectPilotViewModel: ObservableObject {
 
             if createGitHubRepo {
                 do {
-                    try runPipelineStep(.github, statusMessage: "Creating GitHub repo…") {
-                        repoURLForChecklist = try setupGitHubRepo(name: name, projectURL: projectURL)
+                    try await runPipelineStep(.github, statusMessage: "Creating GitHub repo…") {
+                        repoURLForChecklist = try await setupGitHubRepo(name: name, projectURL: projectURL)
                     }
                     lastCreatedGitHubRepoURL = repoURLForChecklist
                 } catch {
@@ -845,15 +852,15 @@ final class ProjectPilotViewModel: ObservableObject {
             if let openStatusMessage = Self.openStepStatusMessage(openInXcode: openInXcodeAfterCreate,
                                                                   openInCodex: openInCodexAfterCreate,
                                                                   openInCLI: openInCLIAfterCreate) {
-                try runPipelineStep(.open, statusMessage: openStatusMessage) {
+                try await runPipelineStep(.open, statusMessage: openStatusMessage) {
                     if openInXcodeAfterCreate {
-                        try openInXcode(projectURL: projectURL)
+                        try await openInXcode(projectURL: projectURL)
                     }
                     if openInCodexAfterCreate {
-                        try openInCodex(projectURL: projectURL)
+                        try await openInCodex(projectURL: projectURL)
                     }
                     if openInCLIAfterCreate {
-                        try openInCLI(projectURL: projectURL)
+                        try await openInCLI(projectURL: projectURL)
                     }
                 }
             } else {
@@ -861,10 +868,10 @@ final class ProjectPilotViewModel: ObservableObject {
             }
 
             if revealInFinderAfterCreate {
-                try revealInFinder(projectURL: projectURL)
+                try await revealInFinder(projectURL: projectURL)
             }
             if openGitHubRepoInSafariAfterCreate, let repoURL = repoURLForChecklist, !repoURL.isEmpty {
-                try openGitHubRepoInSafari(repoURL)
+                try await openGitHubRepoInSafari(repoURL)
             }
 
             if let gitHubErrorMessage {
@@ -938,14 +945,14 @@ final class ProjectPilotViewModel: ObservableObject {
         var failureContext = "GitHub retry"
         do {
             hasFailureDetails = false
-            try runPipelineStep(.github, statusMessage: "Retrying GitHub repo setup…") {
-                lastCreatedGitHubRepoURL = try setupGitHubRepo(name: name, projectURL: projectURL)
+            try await runPipelineStep(.github, statusMessage: "Retrying GitHub repo setup…") {
+                lastCreatedGitHubRepoURL = try await setupGitHubRepo(name: name, projectURL: projectURL)
             }
             clearPendingGitHubRetry()
 
             if openGitHubRepoInSafariAfterCreate, let repoURL = lastCreatedGitHubRepoURL, !repoURL.isEmpty {
                 failureContext = "Opening Safari"
-                try openGitHubRepoInSafari(repoURL)
+                try await openGitHubRepoInSafari(repoURL)
             }
 
             appendDetailLog(.success, "GitHub retry succeeded.")
@@ -983,6 +990,15 @@ final class ProjectPilotViewModel: ObservableObject {
         if isProjectNameInvalid {
             return projectNameValidationHint ?? "Enter a valid project name."
         }
+        if isIOSBundleInvalid {
+            return iOSBundleValidationHint ?? "Invalid iOS bundle identifier."
+        }
+        if isMacOSBundleInvalid {
+            return macOSBundleValidationHint ?? "Invalid macOS bundle identifier."
+        }
+        if isTVOSBundleInvalid {
+            return tvOSBundleValidationHint ?? "Invalid tvOS bundle identifier."
+        }
         return nil
     }
 
@@ -996,12 +1012,12 @@ final class ProjectPilotViewModel: ObservableObject {
 
     private func runPipelineStep(_ step: PipelineStep,
                                  statusMessage: String,
-                                 action: () throws -> Void) throws {
+                                 action: () async throws -> Void) async throws {
         setPipelineStep(step, to: .inProgress)
         setStatus(.info, statusMessage)
 
         do {
-            try action()
+            try await action()
             setPipelineStep(step, to: .success)
         } catch {
             setPipelineStep(step, to: .failure)
@@ -1315,8 +1331,29 @@ final class ProjectPilotViewModel: ObservableObject {
                                             with: "SUPPORTED_PLATFORMS = \"\(joined)\";")
     }
 
+    /// Resolves the effective bundle identifier for the app target.
+    ///
+    /// If the user entered a custom bundle ID for any selected platform, that value is used
+    /// (checking iOS first, then macOS, then tvOS). Otherwise the auto-generated default
+    /// `dn.<project-name>` is returned.
+    private func resolvedBundleIdentifier(projectName: String) -> String {
+        // Prefer the first non-empty custom ID matching a selected platform.
+        let candidates: [(Platform, String)] = [
+            (.iOS, iOSBundleIdentifier),
+            (.macOS, macOSBundleIdentifier),
+            (.tvOS, tvOSBundleIdentifier),
+        ]
+        for (platform, customID) in candidates {
+            let trimmed = customID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if selectedPlatforms.contains(platform), !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return defaultBundleIdentifier(projectName: projectName)
+    }
+
     private func applyBundleIdentifiers(projectName: String, to pbxproj: String) -> String {
-        let base = defaultBundleIdentifier(projectName: projectName)
+        let base = resolvedBundleIdentifier(projectName: projectName)
         let tests = "\(base)Tests"
         let uiTests = "\(base)UITests"
         let baseSettingValue = quotedPbxprojBuildSettingValue(base)
@@ -1325,7 +1362,7 @@ final class ProjectPilotViewModel: ObservableObject {
 
         var updated = pbxproj
 
-        // First, replace template defaults.
+        // Replace template defaults with the resolved (possibly custom) bundle identifiers.
         updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName);",
                                               with: "PRODUCT_BUNDLE_IDENTIFIER = \(baseSettingValue);")
         updated = updated.replacingOccurrences(of: "PRODUCT_BUNDLE_IDENTIFIER = dn.\(projectName)Tests;",
@@ -1851,52 +1888,57 @@ Provide:
     }
     // MARK: - GitHub
 
-    private func setupGitHubRepo(name: String, projectURL: URL) throws -> String? {
+    private func setupGitHubRepo(name: String, projectURL: URL) async throws -> String? {
         let gh = resolvedGHCommandPrefix()
         let repoName = sanitizeRepoName(name)
         let visibilityFlag = createPublicGitHubRepo ? "--public" : "--private"
         let remoteBranchName = "github"
 
         // Ensure auth is valid (gives clear error early)
-        _ = try runInDirectory(projectURL, gh + ["auth", "status"])
+        _ = try await runInDirectory(projectURL, gh + ["auth", "status"])
 
         // Create repo and push.
-        // If it already exists, gh will error; we catch and try “set remote + push”.
+        // If it already exists, gh will error; we catch and try "set remote + push".
         do {
             // Use a dedicated remote name for GitHub.
-            _ = try runInDirectory(projectURL, gh + ["repo", "create", repoName, visibilityFlag, "--source=.", "--remote=github"])
+            _ = try await runInDirectory(projectURL, gh + ["repo", "create", repoName, visibilityFlag, "--source=.", "--remote=github"])
         } catch {
             // Fallback: if the repo already exists, wire `github` remote + push.
             // We avoid guessing owner/org; `gh repo view <name>` resolves against your authenticated user.
             let sshURL: String
             do {
-                sshURL = try runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "sshUrl", "-q", ".sshUrl"])
+                sshURL = try await runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "sshUrl", "-q", ".sshUrl"])
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             } catch {
                 throw PPError("GitHub repo create failed for '\(repoName)'. Make sure you're logged into GitHub CLI (run: gh auth login) and that the repo name is valid.")
             }
 
             // Ensure we have a main branch (Git's default can vary).
-            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
+            _ = try? await runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
 
             // Add github remote if missing (or overwrite if it exists).
-            _ = try? runInDirectory(projectURL, ["/usr/bin/git", "remote", "remove", "github"])
-            _ = try runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "github", sshURL])
+            _ = try? await runInDirectory(projectURL, ["/usr/bin/git", "remote", "remove", "github"])
+            _ = try await runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "github", sshURL])
         }
 
-        // Local branch stays "main", remote branch is "github".
-        _ = try runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
-        _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "github", "HEAD:\(remoteBranchName)"])
-        _ = try runInDirectory(projectURL, gh + ["repo", "edit", repoName, "--default-branch", remoteBranchName])
+        // Resolve the full OWNER/REPO identifier (e.g. "donnoel/Delete") which is
+        // required by `gh repo edit` and `gh repo view`. The bare repo name alone
+        // (e.g. "Delete") is rejected by these commands.
+        let fullRepoName = try await resolveFullRepoName(repoName: repoName, gh: gh, projectURL: projectURL)
 
-        let remoteMainHead = try runInDirectory(
+        // Local branch stays "main", remote branch is "github".
+        _ = try await runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
+        _ = try await runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "github", "HEAD:\(remoteBranchName)"])
+        _ = try await runInDirectory(projectURL, gh + ["repo", "edit", fullRepoName, "--default-branch", remoteBranchName])
+
+        let remoteMainHead = try await runInDirectory(
             projectURL,
             ["/usr/bin/git", "ls-remote", "--heads", "github", "refs/heads/main"]
         ).trimmingCharacters(in: .whitespacesAndNewlines)
 
         if !remoteMainHead.isEmpty {
             do {
-                _ = try runInDirectory(projectURL, ["/usr/bin/git", "push", "github", "--delete", "main"])
+                _ = try await runInDirectory(projectURL, ["/usr/bin/git", "push", "github", "--delete", "main"])
             } catch {
                 throw PPError(
                     "Created remote branch '\(remoteBranchName)' but could not remove remote 'main'. " +
@@ -1905,11 +1947,24 @@ Provide:
             }
         }
 
-        return resolveGitHubRepoURL(repoName: repoName, gh: gh, projectURL: projectURL)
+        return await resolveGitHubRepoURL(fullRepoName: fullRepoName, gh: gh, projectURL: projectURL)
     }
 
-    private func resolveGitHubRepoURL(repoName: String, gh: [String], projectURL: URL) -> String? {
-        let out = try? runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "url", "-q", ".url"])
+    /// Resolves the full `OWNER/REPO` identifier from a bare repo name using `gh repo view`.
+    private func resolveFullRepoName(repoName: String, gh: [String], projectURL: URL) async throws -> String {
+        let output = try await runInDirectory(
+            projectURL,
+            gh + ["repo", "view", repoName, "--json", "nameWithOwner", "-q", ".nameWithOwner"]
+        )
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw PPError("Could not resolve owner for repo '\(repoName)'. Ensure you are logged in with gh auth login.")
+        }
+        return trimmed
+    }
+
+    private func resolveGitHubRepoURL(fullRepoName: String, gh: [String], projectURL: URL) async -> String? {
+        let out = try? await runInDirectory(projectURL, gh + ["repo", "view", fullRepoName, "--json", "url", "-q", ".url"])
         let trimmed = out?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
     }
@@ -1955,46 +2010,46 @@ Provide:
 
     // MARK: - Open in Xcode
 
-    private func openInXcode(projectURL: URL) throws {
+    private func openInXcode(projectURL: URL) async throws {
         // The folder name can include spaces, but the Xcode project name is a sanitized type name.
         let xcodeprojName = sanitizeTypeName(projectURL.lastPathComponent)
         let xcodeproj = projectURL.appendingPathComponent("\(xcodeprojName).xcodeproj", isDirectory: true)
         if !FileManager.default.fileExists(atPath: xcodeproj.path) {
             throw PPError("Missing .xcodeproj at \(xcodeproj.lastPathComponent).")
         }
-        _ = try run([ "/usr/bin/open", "-a", "Xcode", xcodeproj.path ])
+        _ = try await run([ "/usr/bin/open", "-a", "Xcode", xcodeproj.path ])
     }
 
-    private func openInCodex(projectURL: URL) throws {
+    private func openInCodex(projectURL: URL) async throws {
         guard FileManager.default.fileExists(atPath: projectURL.path) else {
             throw PPError("Missing project folder at \(projectURL.lastPathComponent).")
         }
-        _ = try run([ "/usr/bin/open", "-b", Self.codexBundleIdentifier, projectURL.path ])
+        _ = try await run([ "/usr/bin/open", "-b", Self.codexBundleIdentifier, projectURL.path ])
     }
 
-    private func openInCLI(projectURL: URL) throws {
+    private func openInCLI(projectURL: URL) async throws {
         guard FileManager.default.fileExists(atPath: projectURL.path) else {
             throw PPError("Missing project folder at \(projectURL.lastPathComponent).")
         }
-        _ = try run([ "/usr/bin/open", "-a", "Terminal", projectURL.path ])
+        _ = try await run([ "/usr/bin/open", "-a", "Terminal", projectURL.path ])
     }
 
-    private func revealInFinder(projectURL: URL) throws {
-        _ = try run(["/usr/bin/open", "-R", projectURL.path])
+    private func revealInFinder(projectURL: URL) async throws {
+        _ = try await run(["/usr/bin/open", "-R", projectURL.path])
     }
 
-    private func openGitHubRepoInSafari(_ repoURL: String) throws {
+    private func openGitHubRepoInSafari(_ repoURL: String) async throws {
         guard let parsedURL = URL(string: repoURL),
               let scheme = parsedURL.scheme,
               !scheme.isEmpty else {
             throw PPError("Invalid GitHub URL: \(repoURL)")
         }
-        _ = try run(["/usr/bin/open", "-a", "Safari", parsedURL.absoluteString])
+        _ = try await run(["/usr/bin/open", "-a", "Safari", parsedURL.absoluteString])
     }
 
     // MARK: - Process helpers
 
-    private func resolveXcodeGen() throws -> String {
+    private func resolveXcodeGen() async throws -> String {
         let candidates = [
             "/opt/homebrew/bin/xcodegen",
             "/usr/local/bin/xcodegen",
@@ -2004,7 +2059,7 @@ Provide:
             return path
         }
         // As a fallback, try PATH resolution
-        if (try? run(["/usr/bin/env", "xcodegen", "--version"])) != nil {
+        if (try? await run(["/usr/bin/env", "xcodegen", "--version"])) != nil {
             return "/usr/bin/env"
         }
         throw PPError("xcodegen not found. Install with: brew install xcodegen")
@@ -2031,37 +2086,42 @@ Provide:
         try Self.defaultGitignore.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func runInDirectory(_ directory: URL, _ argv: [String]) throws -> String {
-        try run(argv, cwd: directory)
+    private func runInDirectory(_ directory: URL, _ argv: [String]) async throws -> String {
+        try await run(argv, cwd: directory)
     }
 
-    private func run(_ argv: [String], cwd: URL? = nil) throws -> String {
+    private func run(_ argv: [String], cwd: URL? = nil) async throws -> String {
         guard let exe = argv.first else { throw PPError("Invalid command.") }
         let args = Array(argv.dropFirst())
         appendDetailLog(.info, "$ " + ([exe] + args).joined(separator: " "))
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: exe)
-        process.arguments = args
-        if let cwd { process.currentDirectoryURL = cwd }
+        // Execute the process on a background thread to avoid blocking @MainActor.
+        let result: (outStr: String, errStr: String, status: Int32) = try await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: exe)
+            process.arguments = args
+            if let cwd { process.currentDirectoryURL = cwd }
 
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
+            let out = Pipe()
+            let err = Pipe()
+            process.standardOutput = out
+            process.standardError = err
 
-        try process.run()
-        process.waitUntilExit()
+            try process.run()
+            process.waitUntilExit()
 
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+            let outData = out.fileHandleForReading.readDataToEndOfFile()
+            let errData = err.fileHandleForReading.readDataToEndOfFile()
 
-        let outStr = String(data: outData, encoding: .utf8) ?? ""
-        let errStr = String(data: errData, encoding: .utf8) ?? ""
-        let outTrimmed = outStr.trimmingCharacters(in: .whitespacesAndNewlines)
-        let errTrimmed = errStr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let outStr = String(data: outData, encoding: .utf8) ?? ""
+            let errStr = String(data: errData, encoding: .utf8) ?? ""
+            return (outStr, errStr, process.terminationStatus)
+        }.value
 
-        if process.terminationStatus != 0 {
+        let outTrimmed = result.outStr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let errTrimmed = result.errStr.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if result.status != 0 {
             if !errTrimmed.isEmpty {
                 appendDetailLog(.error, errTrimmed)
             }
@@ -2076,7 +2136,7 @@ Provide:
             appendDetailLog(.info, outTrimmed)
         }
 
-        return outStr
+        return result.outStr
     }
 
     // MARK: - Non-UI process helpers

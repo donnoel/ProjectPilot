@@ -6,7 +6,12 @@ struct ProjectPilotPopover: View {
 
     @State private var mode: Mode = .basic
     @State private var pendingRepoDelete: ProjectPilotViewModel.GitHubRepo? = nil
-    @State private var pendingVisibilityChange: (repo: ProjectPilotViewModel.GitHubRepo, makePrivate: Bool)? = nil
+    struct VisibilityChange {
+        let repo: ProjectPilotViewModel.GitHubRepo
+        let makePrivate: Bool
+    }
+
+    @State private var pendingVisibilityChange: VisibilityChange? = nil
 
     enum Mode: String, CaseIterable, Identifiable {
         case basic = "Basic"
@@ -263,40 +268,30 @@ struct ProjectPilotPopover: View {
         .alert("Delete repo?", isPresented: Binding(
             get: { pendingRepoDelete != nil },
             set: { if !$0 { pendingRepoDelete = nil } }
-        )) {
+        ), presenting: pendingRepoDelete) { repo in
             Button("Delete", role: .destructive) {
-                guard let repo = pendingRepoDelete else { return }
                 pendingRepoDelete = nil
                 vm.deleteGitHubRepo(repo)
             }
             Button("Cancel", role: .cancel) {
                 pendingRepoDelete = nil
             }
-        } message: {
-            if let repo = pendingRepoDelete {
-                Text("This will permanently delete \(repo.nameWithOwner) on GitHub.")
-            } else {
-                Text("")
-            }
+        } message: { repo in
+            Text("This will permanently delete \(repo.nameWithOwner) on GitHub.")
         }
         .alert("Change visibility?", isPresented: Binding(
             get: { pendingVisibilityChange != nil },
             set: { if !$0 { pendingVisibilityChange = nil } }
-        )) {
+        ), presenting: pendingVisibilityChange) { change in
             Button("Confirm") {
-                guard let change = pendingVisibilityChange else { return }
                 pendingVisibilityChange = nil
                 vm.setGitHubRepoVisibility(change.repo, isPrivate: change.makePrivate)
             }
             Button("Cancel", role: .cancel) {
                 pendingVisibilityChange = nil
             }
-        } message: {
-            if let change = pendingVisibilityChange {
-                Text("Set \(change.repo.nameWithOwner) to \(change.makePrivate ? "private" : "public")?")
-            } else {
-                Text("")
-            }
+        } message: { change in
+            Text("Set \(change.repo.nameWithOwner) to \(change.makePrivate ? "private" : "public")?")
         }
     }
 
@@ -345,7 +340,7 @@ struct ProjectPilotPopover: View {
 
             HStack(spacing: 8) {
                 Button {
-                    pendingVisibilityChange = (repo: repo, makePrivate: !repo.isPrivate)
+                    pendingVisibilityChange = VisibilityChange(repo: repo, makePrivate: !repo.isPrivate)
                 } label: {
                     Label(repo.isPrivate ? "Make Public" : "Make Private", systemImage: "lock")
                 }
