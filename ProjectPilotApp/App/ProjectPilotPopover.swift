@@ -428,7 +428,8 @@ struct ProjectPilotPopover: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 7)
 
-                if let hint = vm.projectNameValidationHint {
+                if !vm.projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   let hint = vm.projectNameValidationHint {
                     validationHint(hint, isError: vm.isProjectNameInvalid)
                         .padding(.leading, 82)
                         .padding(.bottom, 6)
@@ -937,7 +938,6 @@ struct ProjectPilotPopover: View {
         .tint(vm.selectedPlatforms.contains(platform) ? .accentColor : .gray)
     }
 }
-
 private struct VisualEffectView: NSViewRepresentable {
     let material: NSVisualEffectView.Material
     let blendingMode: NSVisualEffectView.BlendingMode
@@ -1077,4 +1077,3 @@ private extension View {
         )
     }
 }
-

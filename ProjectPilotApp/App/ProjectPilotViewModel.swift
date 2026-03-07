@@ -7,7 +7,6 @@ private struct PPCLIError: LocalizedError {
 
     var errorDescription: String? { message }
 }
-
 @MainActor
 final class ProjectPilotViewModel: ObservableObject {
     enum Platform: String, CaseIterable, Identifiable, Codable {
@@ -499,13 +498,6 @@ final class ProjectPilotViewModel: ObservableObject {
 
     // MARK: - GitHub Repos
 
-    private struct GHRepoListItem: Decodable {
-        let nameWithOwner: String
-        let url: String
-        let isPrivate: Bool
-        let updatedAt: Date?
-    }
-
     private func refreshGitHubReposAsync() async {
         guard !isRefreshingGitHubRepos else { return }
         isRefreshingGitHubRepos = true
@@ -529,18 +521,8 @@ final class ProjectPilotViewModel: ObservableObject {
                     ]
                 )
 
-                let data = Data(out.utf8)
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let decoded = try decoder.decode([GHRepoListItem].self, from: data)
-                return decoded.map { item in
-                    GitHubRepo(
-                        nameWithOwner: item.nameWithOwner,
-                        url: item.url,
-                        isPrivate: item.isPrivate,
-                        updatedAt: item.updatedAt
-                    )
-                }.sorted { lhs, rhs in
+                let decoded = try Self.parseGitHubRepos(fromJSON: out)
+                return decoded.sorted { lhs, rhs in
                     lhs.nameWithOwner.localizedCaseInsensitiveCompare(rhs.nameWithOwner) == .orderedAscending
                 }
             }.value
@@ -562,7 +544,7 @@ final class ProjectPilotViewModel: ObservableObject {
         let rootURL = projectRootURL.standardizedFileURL
         let results = await Task.detached(priority: .utility) {
             repos.reduce(into: [String: RepoSyncStatus]()) { dict, repo in
-                dict[repo.id] = Self.computeSyncStatusStatic(repo: repo, projectRootURL: rootURL)
+                dict[repo.nameWithOwner] = Self.computeSyncStatusStatic(repo: repo, projectRootURL: rootURL)
             }
         }.value
         githubRepoSyncStatus = results
@@ -734,16 +716,7 @@ final class ProjectPilotViewModel: ObservableObject {
                     "repo", "view", repo.nameWithOwner,
                     "--json", "nameWithOwner,url,isPrivate,updatedAt"
                 ])
-                let data = Data(out.utf8)
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let item = try decoder.decode(GHRepoListItem.self, from: data)
-                return GitHubRepo(
-                    nameWithOwner: item.nameWithOwner,
-                    url: item.url,
-                    isPrivate: item.isPrivate,
-                    updatedAt: item.updatedAt
-                )
+                return try Self.parseGitHubRepo(fromJSON: out)
             }.value
 
             if let index = githubRepos.firstIndex(where: { $0.id == repo.id }) {
@@ -773,6 +746,54 @@ final class ProjectPilotViewModel: ObservableObject {
                 setStatus(.error, "Delete failed: \(description)")
             }
         }
+    }
+
+    private nonisolated static func parseGitHubRepos(fromJSON json: String) throws -> [GitHubRepo] {
+        let object = try parseJSONObject(fromJSON: json)
+        guard let items = object as? [[String: Any]] else {
+            throw PPCLIError(message: "Unexpected GitHub repo list format.")
+        }
+
+        return try items.map(parseGitHubRepo(fromJSONObject:))
+    }
+
+    private nonisolated static func parseGitHubRepo(fromJSON json: String) throws -> GitHubRepo {
+        let object = try parseJSONObject(fromJSON: json)
+        guard let item = object as? [String: Any] else {
+            throw PPCLIError(message: "Unexpected GitHub repo format.")
+        }
+
+        return try parseGitHubRepo(fromJSONObject: item)
+    }
+
+    private nonisolated static func parseJSONObject(fromJSON json: String) throws -> Any {
+        guard let data = json.data(using: .utf8) else {
+            throw PPCLIError(message: "Unable to decode GitHub CLI output.")
+        }
+
+        return try JSONSerialization.jsonObject(with: data)
+    }
+
+    private nonisolated static func parseGitHubRepo(fromJSONObject object: [String: Any]) throws -> GitHubRepo {
+        guard let nameWithOwner = object["nameWithOwner"] as? String,
+              let url = object["url"] as? String,
+              let isPrivate = object["isPrivate"] as? Bool else {
+            throw PPCLIError(message: "GitHub CLI output is missing expected repo fields.")
+        }
+
+        let updatedAt: Date?
+        if let updatedAtString = object["updatedAt"] as? String, !updatedAtString.isEmpty {
+            updatedAt = ISO8601DateFormatter().date(from: updatedAtString)
+        } else {
+            updatedAt = nil
+        }
+
+        return GitHubRepo(
+            nameWithOwner: nameWithOwner,
+            url: url,
+            isPrivate: isPrivate,
+            updatedAt: updatedAt
+        )
     }
 
     // MARK: - Pipeline
@@ -3205,4 +3226,3 @@ actor CodexQuotaReader {
         return text
     }
 }
-
