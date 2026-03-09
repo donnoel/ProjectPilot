@@ -559,6 +559,24 @@ final class ProjectPilotViewModel: ObservableObject {
             .appendingPathComponent(repoName, isDirectory: true)
     }
 
+    nonisolated static func normalizedGitHubRemoteURLForSharedAuth(_ remoteURL: String) -> String {
+        let trimmed = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+
+        let scpPrefix = "git@github.com:"
+        if trimmed.hasPrefix(scpPrefix) {
+            let suffix = String(trimmed.dropFirst(scpPrefix.count))
+            return "https://github.com/" + suffix
+        }
+
+        let sshPrefix = "ssh://git@github.com/"
+        if trimmed.hasPrefix(sshPrefix) {
+            let suffix = String(trimmed.dropFirst(sshPrefix.count))
+            return "https://github.com/" + suffix
+        }
+        return trimmed
+    }
+
     private nonisolated static func computeSyncStatusStatic(repo: GitHubRepo, projectRootURL: URL) -> RepoSyncStatus {
         let checkedAt = Date()
         let repoName = repo.nameWithOwner.split(separator: "/").last.map(String.init) ?? repo.nameWithOwner
@@ -623,8 +641,20 @@ final class ProjectPilotViewModel: ObservableObject {
                 remoteName = remotes[0]
             }
 
-            _ = try step("remote get-url \(remoteName)") {
+            let currentRemoteURL = try step("remote get-url \(remoteName)") {
                 try runProcess(["/usr/bin/git", "remote", "get-url", remoteName], cwd: localURL)
+            }.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let normalizedRemoteURL = normalizedGitHubRemoteURLForSharedAuth(currentRemoteURL)
+            if normalizedRemoteURL != currentRemoteURL {
+                _ = try step("remote set-url \(remoteName)") {
+                    try runProcess(["/usr/bin/git", "remote", "set-url", remoteName, normalizedRemoteURL], cwd: localURL)
+                }
+            }
+
+            let gh = resolvedGHCommandPrefixStatic()
+            _ = try step("gh auth setup-git") {
+                try runProcess(gh + ["auth", "setup-git"], cwd: localURL)
             }
 
             _ = try step("git fetch \(remoteName)") {
@@ -649,10 +679,10 @@ final class ProjectPilotViewModel: ObservableObject {
                 return RepoSyncStatus(state: .error("No remote branches found on \"\(remoteName)\"."), localPath: localPathDisplay, checkedAt: checkedAt)
             }
 
-            // Convention: local branch is "main". Remote branch is typically "github".
-            // Be tolerant if a repo still has a remote "main" branch.
-            let preferredCompareRef = "\(remoteName)/github"
-            let fallbackCompareRef = "\(remoteName)/main"
+            // Convention: local and remote branches are "main".
+            // Be tolerant if a repo still has a legacy remote "github" branch.
+            let preferredCompareRef = "\(remoteName)/main"
+            let fallbackCompareRef = "\(remoteName)/github"
 
             let compareRef: String
             if remoteRefs.contains(preferredCompareRef) {
@@ -661,7 +691,7 @@ final class ProjectPilotViewModel: ObservableObject {
                 compareRef = fallbackCompareRef
             } else {
                 return RepoSyncStatus(
-                    state: .error("Missing remote branch \"github\" (or \"main\") on remote \"\(remoteName)\"."),
+                    state: .error("Missing remote branch \"main\" (or legacy \"github\") on remote \"\(remoteName)\"."),
                     localPath: localPathDisplay,
                     checkedAt: checkedAt
                 )
@@ -1913,10 +1943,11 @@ Provide:
         let gh = resolvedGHCommandPrefix()
         let repoName = sanitizeRepoName(name)
         let visibilityFlag = createPublicGitHubRepo ? "--public" : "--private"
-        let remoteBranchName = "github"
+        let remoteBranchName = "main"
 
         // Ensure auth is valid (gives clear error early)
         _ = try await runInDirectory(projectURL, gh + ["auth", "status"])
+        _ = try await runInDirectory(projectURL, gh + ["auth", "setup-git"])
 
         // Create repo and push.
         // If it already exists, gh will error; we catch and try "set remote + push".
@@ -1926,9 +1957,9 @@ Provide:
         } catch {
             // Fallback: if the repo already exists, wire `github` remote + push.
             // We avoid guessing owner/org; `gh repo view <name>` resolves against your authenticated user.
-            let sshURL: String
+            let httpsURL: String
             do {
-                sshURL = try await runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "sshUrl", "-q", ".sshUrl"])
+                httpsURL = try await runInDirectory(projectURL, gh + ["repo", "view", repoName, "--json", "url", "-q", ".url"])
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             } catch {
                 throw PPError("GitHub repo create failed for '\(repoName)'. Make sure you're logged into GitHub CLI (run: gh auth login) and that the repo name is valid.")
@@ -1939,7 +1970,14 @@ Provide:
 
             // Add github remote if missing (or overwrite if it exists).
             _ = try? await runInDirectory(projectURL, ["/usr/bin/git", "remote", "remove", "github"])
-            _ = try await runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "github", sshURL])
+            _ = try await runInDirectory(projectURL, ["/usr/bin/git", "remote", "add", "github", httpsURL])
+        }
+
+        let currentRemoteURL = try await runInDirectory(projectURL, ["/usr/bin/git", "remote", "get-url", "github"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedRemoteURL = Self.normalizedGitHubRemoteURLForSharedAuth(currentRemoteURL)
+        if normalizedRemoteURL != currentRemoteURL {
+            _ = try await runInDirectory(projectURL, ["/usr/bin/git", "remote", "set-url", "github", normalizedRemoteURL])
         }
 
         // Resolve the full OWNER/REPO identifier (e.g. "donnoel/Delete") which is
@@ -1947,26 +1985,10 @@ Provide:
         // (e.g. "Delete") is rejected by these commands.
         let fullRepoName = try await resolveFullRepoName(repoName: repoName, gh: gh, projectURL: projectURL)
 
-        // Local branch stays "main", remote branch is "github".
+        // Local and remote branches both stay "main".
         _ = try await runInDirectory(projectURL, ["/usr/bin/git", "branch", "-M", "main"])
         _ = try await runInDirectory(projectURL, ["/usr/bin/git", "push", "-u", "github", "HEAD:\(remoteBranchName)"])
         _ = try await runInDirectory(projectURL, gh + ["repo", "edit", fullRepoName, "--default-branch", remoteBranchName])
-
-        let remoteMainHead = try await runInDirectory(
-            projectURL,
-            ["/usr/bin/git", "ls-remote", "--heads", "github", "refs/heads/main"]
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if !remoteMainHead.isEmpty {
-            do {
-                _ = try await runInDirectory(projectURL, ["/usr/bin/git", "push", "github", "--delete", "main"])
-            } catch {
-                throw PPError(
-                    "Created remote branch '\(remoteBranchName)' but could not remove remote 'main'. " +
-                    "Update default branch to '\(remoteBranchName)' and retry. Details: \(error.localizedDescription)"
-                )
-            }
-        }
 
         return await resolveGitHubRepoURL(fullRepoName: fullRepoName, gh: gh, projectURL: projectURL)
     }

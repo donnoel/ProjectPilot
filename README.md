@@ -19,7 +19,7 @@ Instead of generating “close enough” settings, ProjectPilot produces a proje
 It can also:
 - initialize a git repo,
 - create a GitHub repo via `gh`,
-- push the initial commit to remote branch `github` (and remove remote `main`),
+- push the initial commit to remote branch `main`,
 - and open the project in Xcode.
 
 ---
@@ -70,7 +70,7 @@ ProjectPilot follows a predictable pipeline:
    - updating supported platforms based on selection
 5. **Initialize git**, write `.gitignore`, commit
 6. **Create GitHub repo** with `gh repo create` (public/private)
-7. **Push to remote branch `github`**, set GitHub default branch to `github`, and remove remote `main`
+7. **Push to remote branch `main`** and set GitHub default branch to `main`
 8. **Open in Xcode**
 
 ---
@@ -141,6 +141,7 @@ ProjectPilot/
 
 - **Repo names** are sanitized for GitHub (spaces are converted into a safe format).
 - If `gh` is missing or not authenticated, ProjectPilot will fail that step with a readable status message.
+- GitHub remotes are normalized to `https://github.com/...` and use `gh auth` credentials for git network operations.
 - The generated project is designed to mirror your template’s settings, so the template is the “contract.”
 
 ---

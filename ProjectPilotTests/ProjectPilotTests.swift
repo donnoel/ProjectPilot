@@ -135,6 +135,24 @@ struct ProjectPilotTests {
         #expect(ProjectPilotViewModel.codexQuotaSnapshot(fromRolloutJSONLines: line) == nil)
     }
 
+    @Test func githubRemoteNormalizationConvertsSSHToHTTPS() {
+        #expect(
+            ProjectPilotViewModel.normalizedGitHubRemoteURLForSharedAuth("git@github.com:donnoel/Pause.git")
+                == "https://github.com/donnoel/Pause.git"
+        )
+        #expect(
+            ProjectPilotViewModel.normalizedGitHubRemoteURLForSharedAuth("ssh://git@github.com/donnoel/Glow.git")
+                == "https://github.com/donnoel/Glow.git"
+        )
+    }
+
+    @Test func githubRemoteNormalizationKeepsHTTPSAndTrimsWhitespace() {
+        #expect(
+            ProjectPilotViewModel.normalizedGitHubRemoteURLForSharedAuth(" https://github.com/donnoel/Pause \n")
+                == "https://github.com/donnoel/Pause"
+        )
+    }
+
     @MainActor
     private func clearProjectPilotDefaults() {
         let defaults = UserDefaults.standard
