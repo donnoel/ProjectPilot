@@ -32,7 +32,7 @@ It can also:
 | 🧩 **Platform Selection** | Create a project for **iOS**, **macOS**, **tvOS**, or any combination supported by the template. |
 | 🪄 **One-Click Bootstrap** | Creates folders + starter SwiftUI app + tests + assets with a clean, consistent layout. |
 | ✅ **Starter CI Workflow** | Generates `.github/workflows/ci.yml` per project with project-specific scheme/path and destination-aware test execution. |
-| 🧼 **Clean Git Start** | Initializes git, writes a sensible `.gitignore`, and commits “Initial commit.” |
+| 🧼 **Clean Git Start** | Initializes git, writes a sensible `.gitignore` (including `xcuserdata/`), and commits “Initial commit.” |
 | ☁️ **GitHub Repo Creation** | Creates a repo using `gh` and pushes automatically. |
 | 🔒 **Public/Private Toggle** | Choose whether the GitHub repo is created as public or private. |
 | 📊 **Codex Quota Tab** | Shows live Codex 5-hour + weekly usage limits and credits from local Codex session data. |
@@ -68,7 +68,7 @@ ProjectPilot follows a predictable pipeline:
    - reading the golden template `project.pbxproj`
    - replacing template identifiers with your project name
    - updating supported platforms based on selection
-5. **Initialize git**, write `.gitignore`, commit
+5. **Initialize git**, write `.gitignore` (including `xcuserdata/`), commit
 6. **Create GitHub repo** with `gh repo create` (public/private)
 7. **Push to remote branch `main`** and set GitHub default branch to `main`
 8. **Open in Xcode**

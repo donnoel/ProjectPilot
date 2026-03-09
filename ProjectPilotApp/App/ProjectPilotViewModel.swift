@@ -2500,7 +2500,7 @@ Provide:
     private static let defaultGitignore = """
     # Xcode
     DerivedData/
-    *.xcuserdata
+    xcuserdata/
     *.xcuserstate
     *.xccheckout
     *.xcscmblueprint
