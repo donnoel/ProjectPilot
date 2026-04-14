@@ -1165,7 +1165,6 @@ final class ProjectPilotViewModel: ObservableObject {
         try writeIfMissing(url: projectURL.appendingPathComponent("AGENTS.project.md"),
                            contents: projectAgentsTemplate(projectName: projectName))
         try writeCIWorkflowIfNeeded(projectName: projectName, at: projectURL)
-        try writeDefaultCodexSkillsIfNeeded(at: projectURL)
 
         // App sources
         try writeIfMissing(url: appFolderURL.appendingPathComponent("\(projectName)App.swift"),
@@ -1452,28 +1451,7 @@ final class ProjectPilotViewModel: ObservableObject {
                                                              platforms: selectedPlatforms))
     }
 
-    private func writeDefaultCodexSkillsIfNeeded(at projectURL: URL) throws {
-        let skillsRootURL = projectURL
-            .appendingPathComponent(".agents", isDirectory: true)
-            .appendingPathComponent("skills", isDirectory: true)
-        try FileManager.default.createDirectory(at: skillsRootURL, withIntermediateDirectories: true)
 
-        let accessibilitySkillDirectoryURL = skillsRootURL
-            .appendingPathComponent("accessibility-foundation-audit", isDirectory: true)
-        try FileManager.default.createDirectory(at: accessibilitySkillDirectoryURL, withIntermediateDirectories: true)
-        try writeIfMissing(
-            url: accessibilitySkillDirectoryURL.appendingPathComponent("SKILL.md"),
-            contents: accessibilityFoundationAuditSkillTemplate()
-        )
-
-        let performanceSkillDirectoryURL = skillsRootURL
-            .appendingPathComponent("apple-performance-risk-audit", isDirectory: true)
-        try FileManager.default.createDirectory(at: performanceSkillDirectoryURL, withIntermediateDirectories: true)
-        try writeIfMissing(
-            url: performanceSkillDirectoryURL.appendingPathComponent("SKILL.md"),
-            contents: applePerformanceRiskAuditSkillTemplate()
-        )
-    }
 
     static func ciWorkflowTemplate(projectName: String, platforms: Set<Platform>) -> String {
         let destination = ciDestination(for: platforms)
@@ -2027,196 +2005,8 @@ Provide:
 """
     }
 
-    private func accessibilityFoundationAuditSkillTemplate() -> String {
-        """
----
-name: accessibility-foundation-audit
-description: Audit an Apple-platform app codebase for relevant accessibility support, identify concrete implementation evidence, flag missing or weak areas, and report what is likely safe to declare in App Store Connect. Use for iOS, macOS, iPadOS, or tvOS apps when the user asks for an accessibility audit, accessibility checklist, App Store Connect accessibility declarations, or guidance on missing accessibility support.
----
 
-# Accessibility Foundation Audit
-
-You are auditing an Apple-platform app codebase for accessibility based on the actual code and UI architecture, not a generic checklist alone.
-
-## Primary goal
-Determine:
-1. Which accessibility features should exist for this app based on its codebase and platforms
-2. Which accessibility features are concretely implemented
-3. Which areas are missing, weak, or questionable
-4. Which features appear safe to declare in App Store Connect
-5. The smallest safe fixes for any meaningful gaps
-
-## Required approach
-- Read `AGENTS.md` and `AGENTS.project.md` first.
-- Use only concrete code evidence.
-- Do not assume accessibility support exists unless implementation evidence is present.
-- Infer relevance from the actual app structure, views, navigation, controls, motion, media, and platforms.
-- If a feature is not applicable, say so explicitly.
-- Prefer Apple-native semantic accessibility APIs and SwiftUI modifiers.
-- Do not make code changes unless explicitly asked. Audit and recommend only.
-
-## What to scan for
-Evaluate where relevant:
-- VoiceOver labels, values, hints, traits, grouping, and reading order
-- Semantic control roles and accessible naming
-- Dynamic Type or scalable text behavior where applicable
-- Contrast and legibility in light/dark appearance
-- Hit target sizing and interaction affordance
-- Reduce Motion and Reduce Transparency handling
-- Focus behavior and keyboard navigation, especially on macOS and tvOS
-- State communication for toggles, selection, timers, progress, alerts, errors, and transient status
-- Images, charts, media, and custom visual elements that may need spoken meaning
-- Custom controls that may need explicit accessibility actions, adjustable actions, or alternate representation
-- Gesture-heavy interactions that may need accessible alternatives
-
-## Special attention areas
-Be extra careful around:
-- custom controls
-- overlays and popovers
-- animation-heavy views
-- glass, blur, translucency, and motion-driven visuals
-- charts and data visualization
-- timers and ambient experiences
-- media playback
-- navigation structures and focus order
-- tvOS remote interaction and focus
-- macOS keyboard-first flows
-
-## Reporting rules
-- Separate high-confidence implementation evidence from inference.
-- Do not mark an App Store Connect accessibility feature as supported unless the code evidence is strong enough.
-- If manual validation is still needed, say so clearly.
-- Prefer practical findings over exhaustive but low-value noise.
-- Cap the report to the most meaningful findings if the codebase is large.
-
-## Output format
-1. Scope scanned
-   - Platforms
-   - Major UI surfaces inspected
-   - Accessibility categories scanned for
-
-2. Identified in code
-   - Feature
-   - Evidence
-   - Files
-
-3. Missing / weak / questionable
-   - Issue
-   - Why it matters
-   - Files
-   - Smallest safe fix
-
-4. App Store Connect candidate declarations
-   - Likely supported now
-   - Not yet safe to claim
-   - Unknown / needs manual validation
-
-5. Overall accessibility foundation rating
-   - Strong / Partial / Weak
-   - Top 3 next actions
-
-## Tone
-Be concrete, conservative, and practical.
-Do not overclaim.
-Do not shame the codebase.
-Focus on what is implemented, what is missing, and what matters most next.
-"""
-    }
-
-    private func applePerformanceRiskAuditSkillTemplate() -> String {
-        """
----
-name: apple-performance-risk-audit
-description: Audit an Apple-platform app codebase for likely performance, responsiveness, rendering, memory, and energy risks using concrete code evidence. Use for SwiftUI apps on iOS, macOS, iPadOS, or tvOS when the user asks for a performance audit, smoothness review, energy review, animation/rendering risk scan, or release-readiness performance check.
----
-
-# Apple Performance Risk Audit
-
-You are auditing an Apple-platform app codebase for likely performance, responsiveness, rendering, memory, and energy risks based on the actual codebase.
-
-## Primary goal
-Determine:
-1. Which parts of the codebase are most likely to cause dropped frames, sluggishness, excessive recomputation, GPU pressure, memory pressure, or energy waste
-2. Which findings are high-confidence versus inferred risk
-3. The smallest safe fixes that would reduce practical product risk
-4. Which existing patterns appear performance-friendly
-
-## Required approach
-- Read `AGENTS.md` and `AGENTS.project.md` first.
-- Use only concrete code evidence.
-- Prioritize practical product risks over theoretical micro-optimizations.
-- Do not claim certainty when the code only suggests risk. Label inferred risks clearly.
-- Respect the platform context: iOS, macOS, iPadOS, and tvOS can have different performance concerns.
-- Do not refactor broadly. Recommend the smallest safe fix first.
-- Do not make code changes unless explicitly asked. Audit and recommend only.
-
-## What to scan for
-Evaluate where relevant:
-- SwiftUI state propagation that may trigger unnecessary body recomputation
-- Broad observable state causing too much view invalidation
-- Heavy view hierarchies and expensive composition
-- Blur, materials, shadows, masks, overlays, and translucency that may increase GPU cost
-- Animation churn, overly frequent transitions, or nonessential motion
-- Timers, polling, or high-frequency updates
-- Main-thread work that should be offloaded
-- File IO or decoding on the main thread
-- Image loading, decoding, resizing, and caching issues
-- Lists, grids, lazy containers, and large data presentation risks
-- Charts, maps, media, or canvas-style drawing risks
-- Memory retention or large object lifetimes
-- Energy usage concerns from frequent updates, animations, sensors, or background work
-
-## Special attention areas
-Be especially alert for:
-- ambient visuals
-- waveform/particle/glow effects
-- timers and clocks
-- charts and maps
-- scrolling surfaces with rich cells
-- repeated blur/material layers
-- custom drawing and canvas usage
-- image-heavy galleries
-- animation-heavy onboarding or hero screens
-- tvOS focus transitions and large-screen rendering cost
-
-## Reporting rules
-- Separate high-confidence findings from medium-confidence watch items.
-- Prefer concrete code paths and files over vague performance advice.
-- Call out positive patterns that already reduce risk.
-- Focus on the smallest safe fixes that preserve behavior and design intent.
-- Keep the report useful for a real ship decision.
-
-## Output format
-1. Scope scanned
-   - Platforms
-   - Surfaces/components inspected
-   - Categories scanned for
-
-2. High-confidence risks
-   - Severity
-   - Files
-   - Evidence
-   - Why it matters
-   - Smallest safe fix
-
-3. Medium-confidence watch items
-   - Files
-   - Why it may matter
-   - What to verify manually
-
-4. Positive findings
-   - Existing patterns that appear performance-friendly
-
-5. Overall performance risk rating
-   - Low / Moderate / High
-   - Top 3 next actions
-
-## Tone
-Be grounded, practical, and calm.
-Do not inflate minor issues into drama.
-Prioritize user-visible smoothness, responsiveness, and energy efficiency.
-"""
-    }
+  
     // MARK: - GitHub
 
     private func setupGitHubRepo(name: String, projectURL: URL) async throws -> String? {
