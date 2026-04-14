@@ -1839,14 +1839,39 @@ This repo is an Apple-platform app codebase. You are an engineering agent (Codex
 - **File persistence must be safe.** Use atomic writes where appropriate.
 - **Privacy-first.** No unexpected network calls.
 - **Preserve core behavior contracts.** Do not regress existing user-visible flows without explicitly calling it out.
+- **Accessibility is first-class.** Treat accessibility as a foundation requirement for every user-facing change, not a later polish pass.
 
 ## Workflow
 1. Read existing code and architecture before editing.
-2. Propose a minimal plan in 2-5 bullets.
-3. Implement the smallest viable patch.
-4. Ensure build passes with **zero warnings**.
-5. If tests exist or are touched, run them. Add tests for non-trivial logic.
-6. If behavior changed, update docs (`README.md` / `AGENTS.project.md`) in the same patch.
+2. Read `AGENTS.project.md` before making project-specific decisions.
+3. Propose a minimal plan in 2-5 bullets.
+4. Implement the smallest viable patch.
+5. Ensure build passes with **zero warnings**.
+6. If tests exist or are touched, run them. Add tests for non-trivial logic.
+7. If behavior changed, update docs (`README.md` / `AGENTS.project.md`) in the same patch.
+8. For user-facing UI work, perform an accessibility pass before considering the task done.
+
+## Accessibility baseline (required)
+For every user-facing view, feature, or interaction, evaluate and implement the accessibility support that is relevant to that code.
+
+Always scan for and handle, where applicable:
+- VoiceOver support with clear labels, values, hints, traits, and reading order
+- Semantic controls and roles using Apple-native accessibility APIs
+- Dynamic Type / scalable text where the platform and UI call for it
+- Sufficient contrast and legibility in light/dark appearances
+- Hit target size and interaction affordance
+- Reduce Motion / Reduce Transparency accommodations where motion, blur, or translucency are used
+- State communication for toggles, selections, progress, timers, alerts, and transient status
+- Focus behavior and keyboard navigation where relevant (especially macOS/tvOS)
+- Image/chart/media descriptions when visual meaning would otherwise be lost
+- Accessibility actions or adjustable behavior for custom controls when needed
+
+Rules:
+- Do not claim accessibility support exists unless there is concrete code evidence.
+- Prefer semantic SwiftUI / Apple-native APIs over custom accessibility workarounds.
+- If a custom control or visual treatment weakens accessibility, fix it or call out the gap explicitly.
+- When shipping or reviewing a feature, note what accessibility support was added, verified, missing, or not applicable.
+- When asked for an accessibility audit, report: what was scanned, what was identified in code, what is missing, and what can be safely declared in App Store Connect.
 
 ## Code style
 - Keep types small and focused.
@@ -1860,6 +1885,7 @@ This repo is an Apple-platform app codebase. You are an engineering agent (Codex
 - Mention which files were modified and why.
 - Provide a short commit message suggestion.
 - Mention any user-visible behavior changes explicitly.
+- Mention accessibility impact for user-facing changes: what was improved, verified, still missing, or not applicable.
 
 ## What not to do
 - Don't introduce new dependencies.
@@ -1868,6 +1894,7 @@ This repo is an Apple-platform app codebase. You are an engineering agent (Codex
 - Don't change public behavior without stating it.
 - Don't hide failures; surface actionable status and retry paths.
 - Don't replace plain-language setup guidance with unnecessary jargon.
+- Don't mark an accessibility feature as supported unless the implementation is actually present and appropriate.
 
 If something is ambiguous, default to the simplest solution that preserves correctness and forward progress.
 """
@@ -1895,12 +1922,14 @@ Starter checklist:
 2) Define architecture boundaries
 3) Define reliability and UX goals
 4) Define testing priorities
+5) Define accessibility expectations for the product early, not at submission time
 
 ## Architecture snapshot (current)
 Capture the current technical shape as it becomes real:
 - app entry and navigation model
 - core view models/services
 - data flow and persistence
+- major custom UI components that may need explicit accessibility work
 
 ## Concurrency rules (important)
 Keep rules explicit for this project as they become known.
@@ -1908,26 +1937,61 @@ Keep rules explicit for this project as they become known.
 - keep IO/network work off the main actor
 - avoid broad isolation as a shortcut
 
+## Accessibility requirements (important)
+Accessibility must be designed into the project from the beginning and updated as the codebase evolves.
+
+For this project, agents should scan the codebase for the accessibility support that should exist based on the actual UI and interaction model, not from a generic checklist alone.
+
+At a minimum, evaluate and document where relevant:
+- VoiceOver labels, values, hints, traits, grouping, and reading order
+- Dynamic Type / text scaling behavior
+- Contrast, legibility, and support for light/dark appearance
+- Reduce Motion / Reduce Transparency handling
+- Hit targets and gesture accessibility
+- Keyboard navigation and focus behavior for macOS/tvOS
+- State announcements for progress, selection, toggles, timers, errors, and transient UI
+- Support for custom controls, charts, images, media, and any non-standard interaction pattern
+
+Project rules:
+- New user-facing code should include accessibility support as it is built.
+- Accessibility regressions should be treated as real product bugs.
+- Do not claim an accessibility feature is supported unless there is concrete implementation evidence.
+- When requested, provide an accessibility audit that clearly separates:
+  1) features scanned for
+  2) features identified in code
+  3) gaps or incorrect implementations
+  4) features that appear safe to declare in App Store Connect
+- If a feature is not applicable to the current codebase, say so explicitly instead of forcing a false positive.
+
 ## Behavior invariants (do not regress)
 List critical product contracts once identified.
 Examples:
 - setup flows
 - creation/sync pipelines
 - data safety guarantees
+- accessibility behavior for critical user flows once established
 
 ## UX rules
 Document UX guarantees (copy tone, interactions, failure handling, keyboard flows).
 
+Accessibility-specific UX expectations should also be captured here once known:
+- whether motion must be reduced in key screens
+- whether text must scale without truncating essential meaning
+- whether custom visuals require alternate spoken summaries
+
 ## Coding conventions
 Project-specific style or patterns that go beyond AGENTS.md.
+Prefer Apple-native accessibility APIs and semantic SwiftUI modifiers over custom workarounds.
 
 ## Build/run notes
 - target platforms
 - warning policy
 - local run/test setup notes
+- note any accessibility test steps, VoiceOver checks, or platform-specific validation flows once defined
 
 ## Near-term priorities
 Keep this list short and current.
+Include accessibility gaps here when they are known and still unresolved.
 
 ## Output expectations per patch
 Provide:
@@ -1935,6 +1999,7 @@ Provide:
 - Files modified
 - Any migration considerations
 - Commit message suggestion
+- Accessibility notes for user-facing work: added, verified, missing, or not applicable
 """
     }
     // MARK: - GitHub
