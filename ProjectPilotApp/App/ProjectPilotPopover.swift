@@ -283,6 +283,13 @@ struct ProjectPilotPopover: View {
 
                         syncStatusBadge(for: repo)
 
+                        if let createdAt = repo.createdAt {
+                            Text("Created \(createdAt.formatted(date: .abbreviated, time: .omitted))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
                         if let updatedAt = repo.updatedAt {
                             Text("Updated \(updatedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption2)

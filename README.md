@@ -48,6 +48,7 @@ It can also:
 - **Mode Tabs**: Switch between **Basic**, **Advanced**, and **Codex** views.
 - **GitHub**
   - Toggle **Public repo** on/off.
+  - GitHub tab repository list shows each repo's created and updated timestamps.
 - **Post-Create**
   - Optionally open in Xcode, open in Codex, open CLI in the project folder, reveal in Finder, and open Safari to the GitHub project.
 - **Codex Tab**

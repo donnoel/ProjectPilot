@@ -183,6 +183,7 @@ final class ProjectPilotViewModel: ObservableObject {
         let nameWithOwner: String
         let url: String
         let isPrivate: Bool
+        let createdAt: Date?
         let updatedAt: Date?
 
         var id: String { nameWithOwner }
@@ -517,7 +518,7 @@ final class ProjectPilotViewModel: ObservableObject {
                     gh + [
                         "repo", "list",
                         "--limit", "200",
-                        "--json", "nameWithOwner,url,isPrivate,updatedAt"
+                        "--json", "nameWithOwner,url,isPrivate,createdAt,updatedAt"
                     ]
                 )
 
@@ -744,7 +745,7 @@ final class ProjectPilotViewModel: ObservableObject {
 
                 let out = try Self.runProcess(gh + [
                     "repo", "view", repo.nameWithOwner,
-                    "--json", "nameWithOwner,url,isPrivate,updatedAt"
+                    "--json", "nameWithOwner,url,isPrivate,createdAt,updatedAt"
                 ])
                 return try Self.parseGitHubRepo(fromJSON: out)
             }.value
@@ -811,6 +812,13 @@ final class ProjectPilotViewModel: ObservableObject {
             throw PPCLIError(message: "GitHub CLI output is missing expected repo fields.")
         }
 
+        let createdAt: Date?
+        if let createdAtString = object["createdAt"] as? String, !createdAtString.isEmpty {
+            createdAt = ISO8601DateFormatter().date(from: createdAtString)
+        } else {
+            createdAt = nil
+        }
+
         let updatedAt: Date?
         if let updatedAtString = object["updatedAt"] as? String, !updatedAtString.isEmpty {
             updatedAt = ISO8601DateFormatter().date(from: updatedAtString)
@@ -822,6 +830,7 @@ final class ProjectPilotViewModel: ObservableObject {
             nameWithOwner: nameWithOwner,
             url: url,
             isPrivate: isPrivate,
+            createdAt: createdAt,
             updatedAt: updatedAt
         )
     }
