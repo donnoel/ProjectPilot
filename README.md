@@ -1,4 +1,4 @@
-# 🧭 **ProjectPilot**
+# 🧭 **Project Pilot**
 ### *A liquid-glass menu bar launcher that generates “known-good” Xcode projects in one click.*
 
 <p align="center">
@@ -10,11 +10,11 @@
 
 ---
 
-## ✨ What is ProjectPilot?
+## ✨ What is Project Pilot?
 
-**ProjectPilot** is a macOS menu bar utility that creates new Xcode projects using a **golden template `.xcodeproj`** as the source of truth.
+**Project Pilot** is a macOS menu bar utility that creates new Xcode projects using a **golden template `.xcodeproj`** as the source of truth.
 
-Instead of generating “close enough” settings, ProjectPilot produces a project that **matches your known-good Xcode configuration**, changing only the project name (and platform selection), so you get consistent build settings, structure, and behavior every time.
+Instead of generating “close enough” settings, Project Pilot produces a project that **matches your known-good Xcode configuration**, changing only the project name (and platform selection), so you get consistent build settings, structure, and behavior every time.
 
 It can also:
 - initialize a git repo,
@@ -54,13 +54,13 @@ It can also:
 - **Codex Tab**
   - Shows near-real-time quota status (5-hour usage, weekly usage, credits) from `~/.codex/sessions` rollout logs.
 - **Create**: Generates the project, bootstraps git, creates/pushes GitHub repo (if enabled), then opens in Xcode.
-- **Quit**: Terminates ProjectPilot.
+- **Quit**: Terminates Project Pilot.
 
 ---
 
 ## 🧠 How it works
 
-ProjectPilot follows a predictable pipeline:
+Project Pilot follows a predictable pipeline:
 
 1. **Create folder** for the new project
 2. **Write starter source files** (SwiftUI entry, basic content, tests, assets)
@@ -78,7 +78,7 @@ ProjectPilot follows a predictable pipeline:
 
 ## 🧱 Architecture Overview
 
-### **ProjectPilotViewModel (@MainActor)**
+### **Project PilotViewModel (@MainActor)**
 The orchestration brain:
 - Validates inputs and selection rules
 - Runs the creation pipeline in sequence
@@ -105,16 +105,16 @@ A small wrapper around `Process` used to run:
 ## 📁 Project Structure
 
 ```text
-ProjectPilot/
-├── ProjectPilotApp/
+Project Pilot/
+├── Project PilotApp/
 │   ├── App/
-│   │   ├── ProjectPilotApp.swift
-│   │   ├── ProjectPilotPopover.swift
-│   │   └── ProjectPilotViewModel.swift
+│   │   ├── Project PilotApp.swift
+│   │   ├── Project PilotPopover.swift
+│   │   └── Project PilotViewModel.swift
 │   └── Resources/
 │       └── Assets.xcassets/
-├── ProjectPilotTests/
-└── ProjectPilotUITests/
+├── Project PilotTests/
+└── Project PilotUITests/
 ```
 
 ---
@@ -128,8 +128,8 @@ ProjectPilot/
 - GitHub CLI (`gh`) if you want automatic repo creation
 
 ### Setup
-1. Open `ProjectPilot.xcodeproj` in Xcode
-2. Build & run the **ProjectPilot** scheme
+1. Open `Project Pilot.xcodeproj` in Xcode
+2. Build & run the **Project Pilot** scheme
 3. (Optional) Authenticate GitHub CLI:
    - `gh auth login`
 4. Click the menu bar icon
@@ -141,19 +141,9 @@ ProjectPilot/
 ## 🧭 Notes & Conventions
 
 - **Repo names** are sanitized for GitHub (spaces are converted into a safe format).
-- If `gh` is missing or not authenticated, ProjectPilot will fail that step with a readable status message.
+- If `gh` is missing or not authenticated, Project Pilot will fail that step with a readable status message.
 - GitHub remotes are normalized to `https://github.com/...` and use `gh auth` credentials for git network operations.
 - The generated project is designed to mirror your template’s settings, so the template is the “contract.”
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Optional toggle: “Create GitHub repo” (local-only mode)
-- [ ] Reveal-in-Finder button after creation
-- [ ] Inline log view for CLI output (git/gh) when something fails
-- [ ] Multiple templates (e.g., iOS-only, macOS-only, tvOS-only) with a template picker
-- [ ] Optional project location picker (instead of a fixed root folder)
 
 ---
 
@@ -163,4 +153,4 @@ Built with care by **Don Noel** and AI collaboration.
 
 ---
 
-> *ProjectPilot is designed to make starting a new Xcode project feel instant, consistent, and calm.*
+> *Project Pilot is designed to make starting a new Xcode project feel instant, consistent, and calm.*
