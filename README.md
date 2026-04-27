@@ -147,9 +147,9 @@ Project Pilot/
 
 ---
 
-## ❤️ Credits
+## Credits
 
-Built with care by **Don Noel** and AI collaboration.
+Built by Don Noel and AI collaboration.
 
 ---
 
