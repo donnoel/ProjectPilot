@@ -1856,11 +1856,12 @@ This repo is an Apple-platform app codebase. You are an engineering agent (Codex
 1. Read existing code and architecture before editing.
 2. Read `AGENTS.project.md` before making project-specific decisions.
 3. Propose a minimal plan in 2-5 bullets.
-4. Implement the smallest viable patch.
+4. Implement the smallest viable patch; solve the specific problem first before generalizing.
 5. Ensure build passes with **zero warnings**.
 6. If tests exist or are touched, run them. Add tests for non-trivial logic.
 7. If behavior changed, update docs (`README.md` / `AGENTS.project.md`) in the same patch.
-8. For user-facing UI work, perform an accessibility pass before considering the task done.
+8. Keep changes easy to validate locally.
+9. For user-facing UI work, perform an accessibility pass before considering the task done.
 
 ## Accessibility baseline (required)
 For every user-facing view, feature, or interaction, evaluate and implement the accessibility support that is relevant to that code.
@@ -1886,11 +1887,21 @@ Rules:
 
 ## Code style
 - Keep types small and focused.
+- Avoid invasive refactors unless the current structure is blocking progress.
 - Prefer `Foundation` + `OSLog`/structured status over ad-hoc prints.
 - Use actors/services for mutable shared state that should not run on the main thread.
 - Prefer `@MainActor` only for UI/view models that must touch SwiftUI state.
+- Keep mutable state ownership explicit and avoid duplicate mutation paths for the same source of truth.
+- Prefer derived state over duplicated stored state where practical.
+- Keep side effects behind narrow, intentional boundaries.
+- Prefer cohesive feature-local code over premature modularization.
+- Add abstractions only when they improve clarity, reduce coupling, or enable testing.
+- Treat performance, memory use, energy use, and UI smoothness as architectural concerns.
+- Avoid unbounded caches without a clear eviction strategy.
+- Avoid broad invalidation, unnecessary recomputation, large observable surfaces, and expensive work in SwiftUI render paths.
 - Avoid global singletons (unless explicitly designed).
 - Keep command execution wrappers deterministic and easy to retry.
+- Document non-obvious invariants, ownership rules, and architectural constraints when needed; favor intent and constraints over obvious narration.
 
 ## Deliverables for each change
 - Mention which files were modified and why.
