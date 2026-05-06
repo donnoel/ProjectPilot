@@ -5,7 +5,6 @@ struct ProjectPilotPopover: View {
     @ObservedObject var vm: ProjectPilotViewModel
 
     @State private var mode: Mode = .basic
-    @State private var confirmingDeleteRepo: ProjectPilotViewModel.GitHubRepo? = nil
     @State private var confirmingVisibilityRepo: ProjectPilotViewModel.GitHubRepo? = nil
 
     enum Mode: String, CaseIterable, Identifiable {
@@ -312,23 +311,7 @@ struct ProjectPilotPopover: View {
                 .help("Open in browser")
             }
 
-            if confirmingDeleteRepo?.id == repo.id {
-                HStack(spacing: 8) {
-                    Text("Permanently delete?")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button("Delete", role: .destructive) {
-                        confirmingDeleteRepo = nil
-                        vm.deleteGitHubRepo(repo)
-                    }
-                    .controlSize(.small)
-                    Button("Cancel") {
-                        confirmingDeleteRepo = nil
-                    }
-                    .controlSize(.small)
-                    Spacer(minLength: 0)
-                }
-            } else if confirmingVisibilityRepo?.id == repo.id {
+            if confirmingVisibilityRepo?.id == repo.id {
                 HStack(spacing: 8) {
                     Text("Make \(repo.isPrivate ? "public" : "private")?")
                         .font(.caption)
@@ -350,13 +333,6 @@ struct ProjectPilotPopover: View {
                         confirmingVisibilityRepo = repo
                     } label: {
                         Label(repo.isPrivate ? "Make Public" : "Make Private", systemImage: "lock")
-                    }
-                    .controlSize(.small)
-
-                    Button(role: .destructive) {
-                        confirmingDeleteRepo = repo
-                    } label: {
-                        Label("Delete", systemImage: "trash")
                     }
                     .controlSize(.small)
 

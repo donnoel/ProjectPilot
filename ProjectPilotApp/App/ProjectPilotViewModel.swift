@@ -368,10 +368,6 @@ final class ProjectPilotViewModel: ObservableObject {
         Task { await setGitHubRepoVisibilityAsync(repo, isPrivate: isPrivate) }
     }
 
-    func deleteGitHubRepo(_ repo: GitHubRepo) {
-        Task { await deleteGitHubRepoAsync(repo) }
-    }
-
     func openLastCreatedProjectInXcode() {
         guard let projectURL = lastCreatedProjectURL else { return }
         Task {
@@ -756,26 +752,6 @@ final class ProjectPilotViewModel: ObservableObject {
             setStatus(.success, "Updated visibility for \(repo.nameWithOwner).")
         } catch {
             setStatus(.error, "Visibility update failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func deleteGitHubRepoAsync(_ repo: GitHubRepo) async {
-        do {
-            try await Task.detached(priority: .utility) {
-                let gh = Self.resolvedGHCommandPrefixStatic()
-                _ = try Self.runProcess(gh + ["repo", "delete", repo.nameWithOwner, "--yes"])
-            }.value
-
-            githubRepos.removeAll { $0.id == repo.id }
-            githubRepoSyncStatus.removeValue(forKey: repo.id)
-            setStatus(.success, "Deleted \(repo.nameWithOwner).")
-        } catch {
-            let description = error.localizedDescription
-            if description.contains("delete_repo") {
-                setStatus(.error, "Missing delete_repo scope. Run: gh auth refresh -s delete_repo")
-            } else {
-                setStatus(.error, "Delete failed: \(description)")
-            }
         }
     }
 
