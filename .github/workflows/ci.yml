@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    env:
+      DERIVED_DATA: ${{ github.workspace }}/DerivedData
+      RESULT_BUNDLE: ${{ github.workspace }}/TestResults/ProjectPilot.xcresult
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
+          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Resolve packages
+        run: xcodebuild -resolvePackageDependencies -project ProjectPilot.xcodeproj
+
+      - name: Show environment
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          xcodebuild -project ProjectPilot.xcodeproj -scheme ProjectPilot -showdestinations
+
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$RESULT_BUNDLE")"
+          rm -rf "$RESULT_BUNDLE"
+          xcodebuild \
+            -project ProjectPilot.xcodeproj \
+            -scheme ProjectPilot \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$DERIVED_DATA" \
+            -resultBundlePath "$RESULT_BUNDLE" \
+            clean test
+
+      - name: Upload xcodebuild artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-artifacts
+          path: |
+            ${{ env.RESULT_BUNDLE }}
+            ${{ env.DERIVED_DATA }}/Logs/Test
