@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SwiftUI
 
 struct ProjectPilotPopover: View {
@@ -162,9 +163,9 @@ struct ProjectPilotPopover: View {
                         Text("Codex quota")
                             .font(.subheadline.weight(.semibold))
                         if let updatedAt = vm.codexQuotaLastUpdatedAt {
-                            Text("Updated \(updatedAt.formatted(date: .omitted, time: .shortened))")
+                            Text(codexUpdatedText(for: updatedAt))
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(codexQuotaIsStale(lastUpdatedAt: updatedAt) ? .orange : .secondary)
                         }
                     }
 
@@ -180,12 +181,14 @@ struct ProjectPilotPopover: View {
 
                 codexUsageCard(
                     title: "5 hour usage limit",
-                    usageLimit: vm.codexQuotaSnapshot?.primary
+                    usageLimit: vm.codexQuotaSnapshot?.primary,
+                    lastUpdatedAt: vm.codexQuotaLastUpdatedAt
                 )
 
                 codexUsageCard(
                     title: "Weekly usage limit",
-                    usageLimit: vm.codexQuotaSnapshot?.secondary
+                    usageLimit: vm.codexQuotaSnapshot?.secondary,
+                    lastUpdatedAt: vm.codexQuotaLastUpdatedAt
                 )
 
                 codexCreditsCard(vm.codexQuotaSnapshot?.credits)
@@ -732,7 +735,8 @@ struct ProjectPilotPopover: View {
     @ViewBuilder
     private func codexUsageCard(
         title: String,
-        usageLimit: ProjectPilotViewModel.CodexQuotaSnapshot.UsageLimit?
+        usageLimit: ProjectPilotViewModel.CodexQuotaSnapshot.UsageLimit?,
+        lastUpdatedAt: Date?
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
@@ -747,9 +751,19 @@ struct ProjectPilotPopover: View {
                     .progressViewStyle(.linear)
                     .tint(codexUsageTint(remainingPercent: usageLimit.remainingPercent))
 
+                Text("Window: \(codexWindowText(minutes: usageLimit.windowMinutes))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Text(codexResetText(for: usageLimit.resetAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if let lastUpdatedAt, codexQuotaIsStale(lastUpdatedAt: lastUpdatedAt) {
+                    Text("Snapshot may be stale. Refresh recommended.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             } else {
                 Text("Waiting for Codex usage data…")
                     .font(.caption)
@@ -811,6 +825,32 @@ struct ProjectPilotPopover: View {
         }
         return "Resets \(resetAt.formatted(date: .abbreviated, time: .shortened))"
     }
+
+    private func codexWindowText(minutes: Int) -> String {
+        guard minutes > 0 else { return "Unknown" }
+        if minutes % (24 * 60) == 0 {
+            let days = minutes / (24 * 60)
+            return days == 1 ? "1 day" : "\(days) days"
+        }
+        if minutes % 60 == 0 {
+            let hours = minutes / 60
+            return hours == 1 ? "1 hour" : "\(hours) hours"
+        }
+        return "\(minutes) minutes"
+    }
+
+    private func codexUpdatedText(for updatedAt: Date) -> String {
+        let relativeFormatter = RelativeDateTimeFormatter()
+        relativeFormatter.unitsStyle = .abbreviated
+        let relative = relativeFormatter.localizedString(for: updatedAt, relativeTo: Date())
+        return "Updated \(updatedAt.formatted(date: .omitted, time: .shortened)) (\(relative))"
+    }
+
+    private func codexQuotaIsStale(lastUpdatedAt: Date) -> Bool {
+        Date().timeIntervalSince(lastUpdatedAt) > Self.codexQuotaStaleThresholdSeconds
+    }
+
+    private static let codexQuotaStaleThresholdSeconds: TimeInterval = 120
 
     private func codexCreditsText(for credits: ProjectPilotViewModel.CodexQuotaSnapshot.Credits) -> String {
         if credits.isUnlimited {

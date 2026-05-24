@@ -135,6 +135,21 @@ struct ProjectPilotTests {
         #expect(ProjectPilotViewModel.codexQuotaSnapshot(fromRolloutJSONLines: line) == nil)
     }
 
+    @Test func codexQuotaSnapshotUsesNewestEventTimestampAcrossLines() {
+        let newestLine = #"{"timestamp":"2026-02-19T10:05:00.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":61.0,"window_minutes":300,"resets_at":1771504200},"secondary":{"used_percent":94.0,"window_minutes":10080,"resets_at":1772026200},"credits":{"has_credits":true,"unlimited":false,"balance":12.5}}}}"#
+        let olderLine = #"{"timestamp":"2026-02-19T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":70.0,"window_minutes":300,"resets_at":1771500600},"secondary":{"used_percent":97.0,"window_minutes":10080,"resets_at":1772022600},"credits":{"has_credits":false,"unlimited":false,"balance":1}}}}"#
+        let text = newestLine + "\n" + olderLine + "\n"
+
+        let snapshot = ProjectPilotViewModel.codexQuotaSnapshot(fromRolloutJSONLines: text, sourcePath: "/tmp/rollout.jsonl")
+        guard let snapshot else {
+            Issue.record("Expected quota snapshot from rollout lines.")
+            return
+        }
+
+        #expect(snapshot.primary?.usedPercent == 61.0)
+        #expect(snapshot.credits?.balance == 12.5)
+    }
+
     @Test func githubRemoteNormalizationConvertsSSHToHTTPS() {
         #expect(
             ProjectPilotViewModel.normalizedGitHubRemoteURLForSharedAuth("git@github.com:donnoel/Pause.git")

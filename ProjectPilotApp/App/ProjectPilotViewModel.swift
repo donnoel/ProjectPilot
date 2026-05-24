@@ -20,6 +20,7 @@ final class ProjectPilotViewModel: ObservableObject {
         case starterApp
         case dashboardApp
         case utilityTool
+        case gameApp
 
         var id: String { rawValue }
 
@@ -28,6 +29,7 @@ final class ProjectPilotViewModel: ObservableObject {
             case .starterApp: return "Starter App"
             case .dashboardApp: return "Dashboard App"
             case .utilityTool: return "Utility Tool"
+            case .gameApp: return "Game App"
             }
         }
 
@@ -36,6 +38,7 @@ final class ProjectPilotViewModel: ObservableObject {
             case .starterApp: return "Clean SwiftUI starter with basic project structure."
             case .dashboardApp: return "Navigation-based starter with overview and tasks sections."
             case .utilityTool: return "Compact utility-style starter aimed at productivity tools."
+            case .gameApp: return "Game-oriented starter with score tracking and round controls."
             }
         }
     }
@@ -1273,6 +1276,15 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     nonisolated static func codexQuotaSnapshot(fromRolloutJSONLines text: String, sourcePath: String = "") -> CodexQuotaSnapshot? {
+        latestCodexQuotaSnapshotCandidate(fromRolloutJSONLines: text, sourcePath: sourcePath)?.snapshot
+    }
+
+    nonisolated static func latestCodexQuotaSnapshotCandidate(
+        fromRolloutJSONLines text: String,
+        sourcePath: String = ""
+    ) -> (snapshot: CodexQuotaSnapshot, eventAt: Date)? {
+        var bestCandidate: (snapshot: CodexQuotaSnapshot, eventAt: Date)? = nil
+
         for rawLine in text.split(whereSeparator: \.isNewline).reversed() {
             let line = String(rawLine)
             guard line.contains("\"token_count\""), line.contains("\"rate_limits\"") else { continue }
@@ -1286,15 +1298,24 @@ final class ProjectPilotViewModel: ObservableObject {
                 continue
             }
 
-            return CodexQuotaSnapshot(
+            let snapshot = CodexQuotaSnapshot(
                 primary: codexUsageLimit(from: rateLimits["primary"] as? [String: Any]),
                 secondary: codexUsageLimit(from: rateLimits["secondary"] as? [String: Any]),
                 credits: codexCredits(from: rateLimits["credits"] as? [String: Any]),
                 sourcePath: sourcePath
             )
+            let eventAt = codexDate(from: event["timestamp"]) ?? .distantPast
+
+            if let currentBest = bestCandidate {
+                if eventAt > currentBest.eventAt {
+                    bestCandidate = (snapshot, eventAt)
+                }
+            } else {
+                bestCandidate = (snapshot, eventAt)
+            }
         }
 
-        return nil
+        return bestCandidate
     }
 
     nonisolated private static func codexUsageLimit(from usageWindow: [String: Any]?) -> CodexQuotaSnapshot.UsageLimit? {
@@ -1344,6 +1365,24 @@ final class ProjectPilotViewModel: ObservableObject {
         return nil
     }
 
+    nonisolated private static func codexDate(from value: Any?) -> Date? {
+        if let number = value as? NSNumber {
+            return Date(timeIntervalSince1970: number.doubleValue)
+        }
+
+        guard let string = value as? String else { return nil }
+
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: string) {
+            return date
+        }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: string)
+    }
+
     nonisolated private static func codexBool(from value: Any?) -> Bool? {
         if let bool = value as? Bool {
             return bool
@@ -1359,6 +1398,13 @@ final class ProjectPilotViewModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    nonisolated private static func loadTextTemplate(named name: String, subdirectory: String) -> String? {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "md", subdirectory: subdirectory) else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
     }
 
     private func applySupportedPlatforms(to pbxproj: String) -> String {
@@ -1656,6 +1702,8 @@ struct \(projectName)App: App {
             return dashboardContentViewTemplate(projectName: projectName)
         case .utilityTool:
             return utilityToolContentViewTemplate()
+        case .gameApp:
+            return gameContentViewTemplate(projectName: projectName)
         }
     }
 
@@ -1745,6 +1793,55 @@ struct ContentView: View {
 """
     }
 
+    private func gameContentViewTemplate(projectName: String) -> String {
+        """
+import SwiftUI
+
+struct ContentView: View {
+    @State private var score: Int = 0
+    @State private var round: Int = 1
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("\\(projectName)")
+                .font(.largeTitle.weight(.bold))
+
+            Text("Round \\(round)")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+
+            Text("Score: \\(score)")
+                .font(.title2.weight(.semibold))
+
+            HStack(spacing: 10) {
+                Button("Score +10") {
+                    score += 10
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Next Round") {
+                    round += 1
+                }
+                .buttonStyle(.bordered)
+
+                Button("Reset") {
+                    score = 0
+                    round = 1
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 420, minHeight: 280)
+    }
+}
+
+#Preview {
+    ContentView()
+}
+"""
+    }
+
     private func infoPlistTemplate() -> String {
         """
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1812,7 +1909,10 @@ Created with **ProjectPilot**.
     }
 
     private func agentsTemplate() -> String {
-        """
+        if let template = Self.loadTextTemplate(named: "AGENTS.template", subdirectory: "Templates") {
+            return template
+        }
+        return """
 # AGENTS.md
 
 This repo is an Apple-platform app codebase. You are an engineering agent (Codex) collaborating with the human. Your job is to make small, correct, testable changes with a clean build at every step.
@@ -1899,7 +1999,10 @@ If something is ambiguous, default to the simplest solution that preserves corre
     }
 
     private func projectAgentsTemplate(projectName: String) -> String {
-        """
+        if let template = Self.loadTextTemplate(named: "AGENTS.project.template", subdirectory: "Templates") {
+            return template.replacingOccurrences(of: "{{PROJECT_NAME}}", with: projectName)
+        }
+        return """
 # AGENTS.project.md
 
 # \(projectName) Project Guide for Agents
@@ -2519,6 +2622,17 @@ Provide:
             id: "builtin.ios-app",
             name: "iOS App",
             templateProfile: .starterApp,
+            platforms: [.iOS],
+            iOSBundleIdentifier: "",
+            macOSBundleIdentifier: "",
+            tvOSBundleIdentifier: "",
+            createGitHubRepo: true,
+            createPublicGitHubRepo: false
+        ),
+        CreationPreset(
+            id: "builtin.ios-game",
+            name: "iOS Game",
+            templateProfile: .gameApp,
             platforms: [.iOS],
             iOSBundleIdentifier: "",
             macOSBundleIdentifier: "",
@@ -3207,8 +3321,7 @@ actor CodexQuotaReader {
     private let fileManager: FileManager
     private let sessionsRootURL: URL
 
-    private var cachedRolloutURL: URL? = nil
-    private var cachedRolloutModificationDate: Date? = nil
+    private var cachedRolloutSignature: String? = nil
     private var cachedSnapshot: ProjectPilotViewModel.CodexQuotaSnapshot? = nil
 
     init(fileManager: FileManager = .default, sessionsRootURL: URL? = nil) {
@@ -3224,38 +3337,61 @@ actor CodexQuotaReader {
             throw ReadError.sessionsDirectoryMissing
         }
 
-        guard let (rolloutURL, modificationDate) = latestRolloutFile() else {
+        let rolloutFiles = latestRolloutFiles(limit: Self.maxRolloutFilesToScan)
+        guard !rolloutFiles.isEmpty else {
             throw ReadError.noRolloutFiles
         }
 
-        if rolloutURL == cachedRolloutURL,
-           modificationDate == cachedRolloutModificationDate,
+        let rolloutSignature = rolloutFiles
+            .map { "\($0.url.path)|\($0.modifiedAt.timeIntervalSince1970)" }
+            .joined(separator: "\n")
+
+        if rolloutSignature == cachedRolloutSignature,
            let cachedSnapshot {
             return cachedSnapshot
         }
 
-        let rolloutTail = try readTail(of: rolloutURL, maxBytes: 128 * 1024)
-        guard let snapshot = ProjectPilotViewModel.codexQuotaSnapshot(fromRolloutJSONLines: rolloutTail,
-                                                                      sourcePath: rolloutURL.path) else {
+        var bestCandidate: (snapshot: ProjectPilotViewModel.CodexQuotaSnapshot, eventAt: Date)? = nil
+
+        for file in rolloutFiles {
+            guard let rolloutTail = try? readTail(of: file.url, maxBytes: Self.rolloutTailMaxBytes) else {
+                continue
+            }
+            guard let candidate = ProjectPilotViewModel.latestCodexQuotaSnapshotCandidate(
+                fromRolloutJSONLines: rolloutTail,
+                sourcePath: file.url.path
+            ) else {
+                continue
+            }
+
+            if let currentBest = bestCandidate {
+                if candidate.eventAt > currentBest.eventAt {
+                    bestCandidate = candidate
+                }
+            } else {
+                bestCandidate = candidate
+            }
+        }
+
+        guard let bestCandidate else {
             throw ReadError.noQuotaData
         }
 
-        cachedRolloutURL = rolloutURL
-        cachedRolloutModificationDate = modificationDate
-        cachedSnapshot = snapshot
-        return snapshot
+        cachedRolloutSignature = rolloutSignature
+        cachedSnapshot = bestCandidate.snapshot
+        return bestCandidate.snapshot
     }
 
-    private func latestRolloutFile() -> (URL, Date)? {
+    private func latestRolloutFiles(limit: Int) -> [(url: URL, modifiedAt: Date)] {
         guard let enumerator = fileManager.enumerator(
             at: sessionsRootURL,
             includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return nil
+            return []
         }
 
-        var bestMatch: (url: URL, modifiedAt: Date)? = nil
+        var matches: [(url: URL, modifiedAt: Date)] = []
 
         for case let fileURL as URL in enumerator {
             guard fileURL.lastPathComponent.hasPrefix("rollout-"),
@@ -3269,17 +3405,13 @@ actor CodexQuotaReader {
             }
 
             let modifiedAt = values.contentModificationDate ?? .distantPast
-            if let currentBest = bestMatch {
-                if modifiedAt > currentBest.modifiedAt {
-                    bestMatch = (fileURL, modifiedAt)
-                }
-            } else {
-                bestMatch = (fileURL, modifiedAt)
-            }
+            matches.append((fileURL, modifiedAt))
         }
 
-        guard let bestMatch else { return nil }
-        return (bestMatch.url, bestMatch.modifiedAt)
+        return matches
+            .sorted { lhs, rhs in lhs.modifiedAt > rhs.modifiedAt }
+            .prefix(max(1, limit))
+            .map { $0 }
     }
 
     private func readTail(of fileURL: URL, maxBytes: Int) throws -> String {
@@ -3313,4 +3445,7 @@ actor CodexQuotaReader {
         }
         return text
     }
+
+    private static let maxRolloutFilesToScan = 24
+    private static let rolloutTailMaxBytes = 128 * 1024
 }
