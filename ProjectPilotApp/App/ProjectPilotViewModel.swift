@@ -2681,6 +2681,10 @@ Provide:
     # Xcode
     DerivedData/
     xcuserdata/
+    xcshareddata/
+    *.xcworkspace/xcuserdata/
+    *.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+    *.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
     *.xcuserstate
     *.xccheckout
     *.xcscmblueprint
