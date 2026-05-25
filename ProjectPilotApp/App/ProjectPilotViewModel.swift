@@ -554,9 +554,35 @@ final class ProjectPilotViewModel: ObservableObject {
         // Canonical convention (per Don): local clones live at:
         //   ~/Development/<RepoName>
         // Example: ~/Development/Sift, ~/Development/Loom
-        FileManager.default.homeDirectoryForCurrentUser
+        let fm = FileManager.default
+        let devRoot = fm.homeDirectoryForCurrentUser
             .appendingPathComponent("Development", isDirectory: true)
-            .appendingPathComponent(repoName, isDirectory: true)
+
+        let direct = devRoot.appendingPathComponent(repoName, isDirectory: true)
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: direct.path, isDirectory: &isDir), isDir.boolValue {
+            return direct
+        }
+
+        // Fallback: support one-level nested workspace folders like:
+        //   ~/Development/AWS/apps-showcase
+        guard let topLevelDirs = try? fm.contentsOfDirectory(
+            at: devRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return direct
+        }
+
+        for parent in topLevelDirs {
+            let nested = parent.appendingPathComponent(repoName, isDirectory: true)
+            var nestedIsDir: ObjCBool = false
+            if fm.fileExists(atPath: nested.path, isDirectory: &nestedIsDir), nestedIsDir.boolValue {
+                return nested
+            }
+        }
+
+        return direct
     }
 
     nonisolated static func normalizedGitHubRemoteURLForSharedAuth(_ remoteURL: String) -> String {
