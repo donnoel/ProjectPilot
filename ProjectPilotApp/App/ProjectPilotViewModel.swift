@@ -679,28 +679,42 @@ final class ProjectPilotViewModel: ObservableObject {
                 return RepoSyncStatus(state: .error("No remote branches found on \"\(remoteName)\"."), localPath: localPathDisplay, checkedAt: checkedAt)
             }
 
-            // Convention: local and remote branches are "main".
-            // Be tolerant if a repo still has a legacy remote "github" branch.
-            let preferredCompareRef = "\(remoteName)/main"
-            let fallbackCompareRef = "\(remoteName)/github"
-
-            let compareRef: String
-            if remoteRefs.contains(preferredCompareRef) {
-                compareRef = preferredCompareRef
-            } else if remoteRefs.contains(fallbackCompareRef) {
-                compareRef = fallbackCompareRef
-            } else {
-                return RepoSyncStatus(
-                    state: .error("Missing remote branch \"main\" (or legacy \"github\") on remote \"\(remoteName)\"."),
-                    localPath: localPathDisplay,
-                    checkedAt: checkedAt
+            let upstreamRef = try? step("read upstream branch") {
+                try runProcess(
+                    ["/usr/bin/git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                    cwd: localURL
                 )
+            }
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // Prefer the active branch's configured upstream to match what users expect from
+            // `git status`. Fallback to ProjectPilot's historic main/github convention.
+            let countsSpec: String
+            if let upstreamRef, !upstreamRef.isEmpty {
+                countsSpec = "HEAD...\(upstreamRef)"
+            } else {
+                let preferredCompareRef = "\(remoteName)/main"
+                let fallbackCompareRef = "\(remoteName)/github"
+
+                let compareRef: String
+                if remoteRefs.contains(preferredCompareRef) {
+                    compareRef = preferredCompareRef
+                } else if remoteRefs.contains(fallbackCompareRef) {
+                    compareRef = fallbackCompareRef
+                } else {
+                    return RepoSyncStatus(
+                        state: .error("Missing remote branch \"main\" (or legacy \"github\") on remote \"\(remoteName)\"."),
+                        localPath: localPathDisplay,
+                        checkedAt: checkedAt
+                    )
+                }
+                countsSpec = "main...\(compareRef)"
             }
 
             let countsOut = try step("rev-list counts") {
                 try runProcess([
                     "/usr/bin/git", "rev-list", "--left-right", "--count",
-                    "main...\(compareRef)"
+                    countsSpec
                 ], cwd: localURL)
             }
 
