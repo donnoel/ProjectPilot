@@ -3369,8 +3369,6 @@ actor CodexQuotaReader {
             return cachedSnapshot
         }
 
-        var bestCandidate: (snapshot: ProjectPilotViewModel.CodexQuotaSnapshot, eventAt: Date)? = nil
-
         for file in rolloutFiles {
             guard let rolloutTail = try? readTail(of: file.url, maxBytes: Self.rolloutTailMaxBytes) else {
                 continue
@@ -3381,23 +3379,15 @@ actor CodexQuotaReader {
             ) else {
                 continue
             }
-
-            if let currentBest = bestCandidate {
-                if candidate.eventAt > currentBest.eventAt {
-                    bestCandidate = candidate
-                }
-            } else {
-                bestCandidate = candidate
-            }
+            // Files are already sorted by modification date descending, so the first file
+            // with valid quota data is the freshest local snapshot and avoids cross-file
+            // timestamp skew from older sessions.
+            cachedRolloutSignature = rolloutSignature
+            cachedSnapshot = candidate.snapshot
+            return candidate.snapshot
         }
 
-        guard let bestCandidate else {
-            throw ReadError.noQuotaData
-        }
-
-        cachedRolloutSignature = rolloutSignature
-        cachedSnapshot = bestCandidate.snapshot
-        return bestCandidate.snapshot
+        throw ReadError.noQuotaData
     }
 
     private func latestRolloutFiles(limit: Int) -> [(url: URL, modifiedAt: Date)] {
