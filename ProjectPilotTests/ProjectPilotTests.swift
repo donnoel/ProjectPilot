@@ -168,11 +168,62 @@ struct ProjectPilotTests {
         )
     }
 
+    @Test func nestedRepoResolutionFindsCheckoutByMatchingGitHubRemote() throws {
+        let containerURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProjectPilotNestedRepo-\(UUID().uuidString)", isDirectory: true)
+        let nestedURL = containerURL.appendingPathComponent("Glow", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: containerURL) }
+
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try runGit(["init", "-q", "-b", "main"], in: nestedURL)
+        try runGit(["remote", "add", "origin", "https://github.com/donnoel/GlowAndroid.git"], in: nestedURL)
+
+        let result = ProjectPilotViewModel.resolveNestedRepoURLStatic(
+            in: containerURL,
+            matchingRemoteURL: "https://github.com/donnoel/GlowAndroid"
+        )
+
+        #expect(result?.standardizedFileURL == nestedURL.standardizedFileURL)
+    }
+
+    @Test func nestedRepoResolutionIgnoresUnrelatedCheckout() throws {
+        let containerURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProjectPilotNestedRepo-\(UUID().uuidString)", isDirectory: true)
+        let nestedURL = containerURL.appendingPathComponent("Glow", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: containerURL) }
+
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try runGit(["init", "-q", "-b", "main"], in: nestedURL)
+        try runGit(["remote", "add", "origin", "https://github.com/donnoel/Glow.git"], in: nestedURL)
+
+        let result = ProjectPilotViewModel.resolveNestedRepoURLStatic(
+            in: containerURL,
+            matchingRemoteURL: "https://github.com/donnoel/GlowAndroid"
+        )
+
+        #expect(result == nil)
+    }
+
     @MainActor
     private func clearProjectPilotDefaults() {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("projectPilot.") {
             defaults.removeObject(forKey: key)
+        }
+    }
+
+    private func runGit(_ arguments: [String], in directory: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+
+        if process.terminationStatus != 0 {
+            throw NSError(domain: "ProjectPilotTests.Git", code: Int(process.terminationStatus))
         }
     }
 

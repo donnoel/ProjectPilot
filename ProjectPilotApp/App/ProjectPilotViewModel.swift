@@ -550,17 +550,21 @@ final class ProjectPilotViewModel: ObservableObject {
         githubRepoSyncStatus = results
     }
 
-    private nonisolated static func resolveLocalRepoURLStatic(repoName: String, projectRootURL: URL) -> URL {
+    private nonisolated static func resolveLocalRepoURLStatic(repo: GitHubRepo, projectRootURL: URL) -> URL {
         // Canonical convention (per Don): local clones live at:
         //   ~/Development/<RepoName>
         // Example: ~/Development/Sift, ~/Development/Loom
         let fm = FileManager.default
         let devRoot = fm.homeDirectoryForCurrentUser
             .appendingPathComponent("Development", isDirectory: true)
+        let repoName = repo.nameWithOwner.split(separator: "/").last.map(String.init) ?? repo.nameWithOwner
 
         let direct = devRoot.appendingPathComponent(repoName, isDirectory: true)
         var isDir: ObjCBool = false
         if fm.fileExists(atPath: direct.path, isDirectory: &isDir), isDir.boolValue {
+            if let nested = resolveNestedRepoURLStatic(in: direct, matchingRemoteURL: repo.url) {
+                return nested
+            }
             return direct
         }
 
@@ -585,6 +589,59 @@ final class ProjectPilotViewModel: ObservableObject {
         return direct
     }
 
+    nonisolated static func resolveNestedRepoURLStatic(in containerURL: URL, matchingRemoteURL expectedRemoteURL: String) -> URL? {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: containerURL.appendingPathComponent(".git").path),
+              let childURLs = try? fm.contentsOfDirectory(
+                at: containerURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+              ) else {
+            return nil
+        }
+
+        let expectedIdentity = gitHubRemoteIdentity(expectedRemoteURL)
+        guard !expectedIdentity.isEmpty else { return nil }
+
+        for childURL in childURLs {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: childURL.path, isDirectory: &isDir),
+                  isDir.boolValue,
+                  fm.fileExists(atPath: childURL.appendingPathComponent(".git").path),
+                  let remoteNamesOutput = try? runProcess(["/usr/bin/git", "remote"], cwd: childURL) else {
+                continue
+            }
+
+            let remoteNames = remoteNamesOutput
+                .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+                .map(String.init)
+                .filter { !$0.isEmpty }
+
+            for remoteName in remoteNames {
+                guard let remoteURL = try? runProcess(
+                    ["/usr/bin/git", "remote", "get-url", remoteName],
+                    cwd: childURL
+                ) else {
+                    continue
+                }
+
+                if gitHubRemoteIdentity(remoteURL) == expectedIdentity {
+                    return childURL
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private nonisolated static func gitHubRemoteIdentity(_ remoteURL: String) -> String {
+        normalizedGitHubRemoteURLForSharedAuth(remoteURL)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .replacingOccurrences(of: ".git", with: "", options: [.anchored, .backwards])
+            .lowercased()
+    }
+
     nonisolated static func normalizedGitHubRemoteURLForSharedAuth(_ remoteURL: String) -> String {
         let trimmed = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }
@@ -605,11 +662,10 @@ final class ProjectPilotViewModel: ObservableObject {
 
     private nonisolated static func computeSyncStatusStatic(repo: GitHubRepo, projectRootURL: URL) -> RepoSyncStatus {
         let checkedAt = Date()
-        let repoName = repo.nameWithOwner.split(separator: "/").last.map(String.init) ?? repo.nameWithOwner
-
         // Local clones follow the convention: ~/Development/<RepoName>
-        // `resolveLocalRepoURLStatic` also provides a legacy fallback to the configured project root.
-        let localURL = resolveLocalRepoURLStatic(repoName: repoName, projectRootURL: projectRootURL)
+        // `resolveLocalRepoURLStatic` also finds a nested checkout when the expected
+        // directory is a container holding the repository clone.
+        let localURL = resolveLocalRepoURLStatic(repo: repo, projectRootURL: projectRootURL)
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: localURL.path, isDirectory: &isDir), isDir.boolValue else {
             return RepoSyncStatus(state: .notLocal, localPath: nil, checkedAt: checkedAt)
