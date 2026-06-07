@@ -13,6 +13,7 @@ struct ProjectPilotPopover: View {
         case advanced = "Advanced"
         case codex = "Codex"
         case github = "GitHub"
+        case backup = "Backup"
 
         var id: String { rawValue }
     }
@@ -24,7 +25,7 @@ struct ProjectPilotPopover: View {
             VStack(alignment: .leading, spacing: 10) {
                 header
                 modePicker
-                if mode != .codex && mode != .github {
+                if mode != .codex && mode != .github && mode != .backup {
                     progressTimeline
                 }
 
@@ -37,6 +38,8 @@ struct ProjectPilotPopover: View {
                     codexSections
                 case .github:
                     githubSections
+                case .backup:
+                    backupSections
                 }
 
                 feedbackSection
@@ -52,6 +55,8 @@ struct ProjectPilotPopover: View {
         .onChange(of: mode) { _, newValue in
             if newValue == .github {
                 vm.ensureGitHubReposLoaded()
+            } else if newValue == .backup {
+                vm.checkDevelopmentBackupStatus()
             }
         }
     }
@@ -346,6 +351,176 @@ struct ProjectPilotPopover: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
+    }
+
+    private var backupSections: some View {
+        section("Development Backup") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    Circle()
+                        .fill(developmentBackupStatusColor)
+                        .frame(width: 9, height: 9)
+                        .padding(.top, 4)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(developmentBackupStatusTitle)
+                            .font(.subheadline.weight(.semibold))
+
+                        Text(developmentBackupStatusDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if vm.isCheckingDevelopmentBackup || vm.isSyncingDevelopmentBackup {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Development backup status")
+                .accessibilityValue(developmentBackupStatusAccessibilityValue)
+
+                pathRow(title: "Local", path: vm.developmentBackupStatus.sourcePath)
+                pathRow(title: "iCloud", path: vm.developmentBackupStatus.backupPath)
+
+                let status = vm.developmentBackupStatus
+                if status.sourceOnlyCount > 0 || status.backupOnlyCount > 0 || status.changedCount > 0 {
+                    HStack(spacing: 6) {
+                        if status.sourceOnlyCount > 0 {
+                            backupCountPill("\(status.sourceOnlyCount) local only")
+                        }
+                        if status.backupOnlyCount > 0 {
+                            backupCountPill("\(status.backupOnlyCount) backup only")
+                        }
+                        if status.changedCount > 0 {
+                            backupCountPill("\(status.changedCount) changed")
+                        }
+                    }
+                }
+
+                if let checkedAt = status.checkedAt {
+                    Text("Checked \(checkedAt.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        vm.syncDevelopmentBackupIfNeeded()
+                    } label: {
+                        Label("Sync", systemImage: "arrow.clockwise")
+                    }
+                    .controlSize(.small)
+                    .disabled(vm.isCheckingDevelopmentBackup || vm.isSyncingDevelopmentBackup)
+
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .onAppear {
+            vm.checkDevelopmentBackupStatus()
+        }
+    }
+
+    private func pathRow(title: String, path: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .frame(width: 46, alignment: .leading)
+            Text(path)
+                .font(.caption.monospaced())
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func backupCountPill(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(.white.opacity(0.10))
+            )
+    }
+
+    private var developmentBackupStatusTitle: String {
+        switch vm.developmentBackupStatus.state {
+        case .notChecked:
+            return "Waiting to check"
+        case .checking:
+            return "Checking backup"
+        case .syncing:
+            return "Syncing to iCloud"
+        case .inSync:
+            return "Development is in sync"
+        case .outOfSync:
+            return "Sync needed"
+        case .checkTimedOut:
+            return "Backup check needs more time"
+        case .sourceMissing:
+            return "Local folder missing"
+        case .backupMissing:
+            return "iCloud backup missing"
+        case .error:
+            return "Backup sync error"
+        }
+    }
+
+    private var developmentBackupStatusDetail: String {
+        switch vm.developmentBackupStatus.state {
+        case .notChecked:
+            return "ProjectPilot checks this automatically."
+        case .checking:
+            return "ProjectPilot is checking the local Development folder against iCloud Drive."
+        case .syncing:
+            return "ProjectPilot is updating the iCloud backup."
+        case .inSync:
+            return "The local Development folder matches the iCloud backup."
+        case .outOfSync:
+            return "Use Sync to update the iCloud backup."
+        case .checkTimedOut:
+            return "The folders are large or iCloud is busy. ProjectPilot did not confirm a full match."
+        case .sourceMissing:
+            return "The local Development folder could not be found."
+        case .backupMissing:
+            return "ProjectPilot will create the iCloud backup folder automatically."
+        case .error(let message):
+            return message
+        }
+    }
+
+    private var developmentBackupStatusAccessibilityValue: String {
+        let status = vm.developmentBackupStatus
+        var parts = [developmentBackupStatusTitle, developmentBackupStatusDetail]
+        if status.sourceOnlyCount > 0 {
+            parts.append("\(status.sourceOnlyCount) local only")
+        }
+        if status.backupOnlyCount > 0 {
+            parts.append("\(status.backupOnlyCount) backup only")
+        }
+        if status.changedCount > 0 {
+            parts.append("\(status.changedCount) changed")
+        }
+        return parts.joined(separator: ". ")
+    }
+
+    var developmentBackupStatusColor: Color {
+        switch vm.developmentBackupStatus.state {
+        case .inSync:
+            return .green
+        case .checking, .syncing, .outOfSync, .checkTimedOut:
+            return .orange
+        case .sourceMissing, .backupMissing, .error:
+            return .red
+        case .notChecked:
+            return .secondary
+        }
     }
 
     private func syncStatusBadge(for repo: ProjectPilotViewModel.GitHubRepo) -> some View {

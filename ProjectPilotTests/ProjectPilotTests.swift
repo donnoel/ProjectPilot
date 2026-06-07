@@ -168,6 +168,59 @@ struct ProjectPilotTests {
         )
     }
 
+    @Test func developmentBackupRsyncDryRunParserCountsChangeTypes() {
+let output = """
+.d..t.... SomeFolder/
+>f+++++++++ NewFile.swift
+cd+++++++++ NewFolder/
+>f..t...... Changed.swift
+*deleting   Removed.swift
+"""
+
+        let changes = ProjectPilotViewModel.parseDevelopmentBackupRsyncDryRun(output)
+
+        #expect(changes.sourceOnlyCount == 2)
+        #expect(changes.backupOnlyCount == 1)
+        #expect(changes.changedCount == 1)
+    }
+
+    @Test func developmentBackupStatusReportsInSyncWhenDirectoriesMatch() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProjectPilotBackup-\(UUID().uuidString)", isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent("source", isDirectory: true)
+        let backupURL = rootURL.appendingPathComponent("backup", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: backupURL, withIntermediateDirectories: true)
+        try "same".write(to: sourceURL.appendingPathComponent("File.txt"), atomically: true, encoding: .utf8)
+        try "same".write(to: backupURL.appendingPathComponent("File.txt"), atomically: true, encoding: .utf8)
+
+        let status = ProjectPilotViewModel.computeDevelopmentBackupStatus(sourceURL: sourceURL, backupURL: backupURL)
+
+        #expect(status.state == .inSync)
+        #expect(status.sourceOnlyCount == 0)
+        #expect(status.backupOnlyCount == 0)
+        #expect(status.changedCount == 0)
+    }
+
+    @Test func developmentBackupStatusReportsOutOfSyncWhenLocalHasNewFile() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProjectPilotBackup-\(UUID().uuidString)", isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent("source", isDirectory: true)
+        let backupURL = rootURL.appendingPathComponent("backup", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: backupURL, withIntermediateDirectories: true)
+        try "new".write(to: sourceURL.appendingPathComponent("New.txt"), atomically: true, encoding: .utf8)
+
+        let status = ProjectPilotViewModel.computeDevelopmentBackupStatus(sourceURL: sourceURL, backupURL: backupURL)
+
+        #expect(status.state == .outOfSync)
+        #expect(status.sourceOnlyCount == 1)
+    }
+
     @Test func nestedRepoResolutionFindsCheckoutByMatchingGitHubRemote() throws {
         let containerURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("ProjectPilotNestedRepo-\(UUID().uuidString)", isDirectory: true)
