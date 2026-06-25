@@ -559,7 +559,7 @@ final class ProjectPilotViewModel: ObservableObject {
         developmentBackupSyncTask?.cancel()
         developmentBackupSyncTask = Task { [weak self] in
             guard let self else { return }
-            await self.checkDevelopmentBackupStatusAsync()
+            await self.checkAndSyncDevelopmentBackupIfNeededAsync()
 
             while !Task.isCancelled {
                 do {
@@ -567,13 +567,21 @@ final class ProjectPilotViewModel: ObservableObject {
                 } catch {
                     break
                 }
-                await self.checkDevelopmentBackupStatusAsync()
+                await self.checkAndSyncDevelopmentBackupIfNeededAsync()
             }
         }
     }
 
-    private func checkDevelopmentBackupStatusAsync() async {
-        guard !isCheckingDevelopmentBackup else { return }
+    private func checkAndSyncDevelopmentBackupIfNeededAsync() async {
+        guard let status = await checkDevelopmentBackupStatusAsync() else { return }
+        if Self.shouldSyncDevelopmentBackup(for: status.state) {
+            await syncDevelopmentBackupIfNeededAsync()
+        }
+    }
+
+    @discardableResult
+    private func checkDevelopmentBackupStatusAsync() async -> DevelopmentBackupStatus? {
+        guard !isCheckingDevelopmentBackup else { return nil }
         isCheckingDevelopmentBackup = true
         developmentBackupStatus = DevelopmentBackupStatus(
             state: .checking,
@@ -594,6 +602,7 @@ final class ProjectPilotViewModel: ObservableObject {
             Self.computeDevelopmentBackupStatus(sourceURL: sourceURL, backupURL: backupURL)
         }.value
         developmentBackupStatus = status
+        return status
     }
 
     private func syncDevelopmentBackupIfNeededAsync() async {
@@ -610,31 +619,39 @@ final class ProjectPilotViewModel: ObservableObject {
         )
         defer { isSyncingDevelopmentBackup = false }
 
-        await syncDevelopmentBackupToICloudAsync()
-        await checkDevelopmentBackupStatusAsync()
+        do {
+            try await syncDevelopmentBackupToICloudAsync()
+            await checkDevelopmentBackupStatusAsync()
+        } catch {
+            developmentBackupStatus = DevelopmentBackupStatus(
+                state: .error(error.localizedDescription),
+                sourcePath: developmentBackupStatus.sourcePath,
+                backupPath: developmentBackupStatus.backupPath,
+                sourceOnlyCount: developmentBackupStatus.sourceOnlyCount,
+                backupOnlyCount: developmentBackupStatus.backupOnlyCount,
+                changedCount: developmentBackupStatus.changedCount,
+                checkedAt: Date()
+            )
+        }
     }
 
-    private func syncDevelopmentBackupToICloudAsync() async {
+    private func syncDevelopmentBackupToICloudAsync() async throws {
         let sourceURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Development", isDirectory: true)
         let backupURL = Self.defaultDevelopmentBackupURL()
 
-        await Task.detached(priority: .utility) {
+        try await Task.detached(priority: .utility) {
             let fm = FileManager.default
             var isDirectory: ObjCBool = false
             guard fm.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                return
+                throw PPCLIError(message: "Local Development folder not found.")
             }
 
-            do {
-                try fm.createDirectory(at: backupURL, withIntermediateDirectories: true)
-                _ = try Self.runProcess(
-                    Self.developmentBackupRsyncArguments(sourceURL: sourceURL, backupURL: backupURL, dryRun: false),
-                    timeoutSeconds: Self.developmentBackupSyncTimeoutSeconds
-                )
-            } catch {
-                return
-            }
+            try fm.createDirectory(at: backupURL, withIntermediateDirectories: true)
+            _ = try Self.runProcess(
+                Self.developmentBackupRsyncArguments(sourceURL: sourceURL, backupURL: backupURL, dryRun: false),
+                timeoutSeconds: Self.developmentBackupSyncTimeoutSeconds
+            )
         }.value
     }
 
@@ -712,7 +729,7 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     nonisolated static func developmentBackupRsyncArguments(sourceURL: URL, backupURL: URL, dryRun: Bool) -> [String] {
-        var arguments = ["/usr/bin/rsync", "-a", "--delete", "--itemize-changes", "--omit-dir-times"]
+        var arguments = ["/usr/bin/rsync", "-rltp", "--delete", "--itemize-changes", "--omit-dir-times"]
         if dryRun {
             arguments.append("--dry-run")
         }
@@ -722,6 +739,15 @@ final class ProjectPilotViewModel: ObservableObject {
         arguments.append(sourceURL.path + "/")
         arguments.append(backupURL.path + "/")
         return arguments
+    }
+
+    nonisolated private static func shouldSyncDevelopmentBackup(for state: DevelopmentBackupStatus.State) -> Bool {
+        switch state {
+        case .outOfSync, .backupMissing:
+            return true
+        case .notChecked, .checking, .syncing, .inSync, .checkTimedOut, .sourceMissing, .error:
+            return false
+        }
     }
 
     nonisolated static func parseDevelopmentBackupRsyncDryRun(_ output: String) -> DevelopmentBackupRsyncDryRunChanges {
@@ -2984,18 +3010,19 @@ Provide:
 
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let codexQuotaPollIntervalSeconds: Double = 10
-    private static let developmentBackupSyncIntervalSeconds: Double = 300
-    private static let developmentBackupCheckTimeoutSeconds: TimeInterval = 20
-    private static let developmentBackupSyncTimeoutSeconds: TimeInterval = 60
-    private static let developmentBackupExcludedPaths = [
+    nonisolated private static let developmentBackupSyncIntervalSeconds: Double = 300
+    nonisolated private static let developmentBackupCheckTimeoutSeconds: TimeInterval = 120
+    nonisolated private static let developmentBackupSyncTimeoutSeconds: TimeInterval = 600
+    nonisolated private static let developmentBackupExcludedPaths = [
         ".DS_Store",
         "*.xcuserstate",
         "xcuserdata/",
-        ".git/",
+        "fsmonitor--daemon.ipc",
         "DerivedData/",
         ".build/",
         "build/",
         "node_modules/",
+        "cdk.out/",
         ".next/",
         ".next-build/",
         ".next-dev/",

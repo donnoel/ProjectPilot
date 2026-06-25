@@ -169,19 +169,38 @@ struct ProjectPilotTests {
     }
 
     @Test func developmentBackupRsyncDryRunParserCountsChangeTypes() {
-let output = """
-.d..t.... SomeFolder/
->f+++++++++ NewFile.swift
-cd+++++++++ NewFolder/
->f..t...... Changed.swift
-*deleting   Removed.swift
-"""
+        let output = """
+        .d..t.... SomeFolder/
+        >f+++++++++ NewFile.swift
+        cd+++++++++ NewFolder/
+        >f..t...... Changed.swift
+        *deleting   Removed.swift
+        """
 
         let changes = ProjectPilotViewModel.parseDevelopmentBackupRsyncDryRun(output)
 
         #expect(changes.sourceOnlyCount == 2)
         #expect(changes.backupOnlyCount == 1)
         #expect(changes.changedCount == 1)
+    }
+
+    @Test func developmentBackupRsyncArgumentsIncludeGitMetadata() {
+        let sourceURL = URL(fileURLWithPath: "/tmp/source", isDirectory: true)
+        let backupURL = URL(fileURLWithPath: "/tmp/backup", isDirectory: true)
+
+        let arguments = ProjectPilotViewModel.developmentBackupRsyncArguments(
+            sourceURL: sourceURL,
+            backupURL: backupURL,
+            dryRun: false
+        )
+
+        #expect(arguments.contains("--delete"))
+        #expect(arguments.contains("-rltp"))
+        #expect(!arguments.contains("-a"))
+        #expect(arguments.contains("--exclude=.DS_Store"))
+        #expect(arguments.contains("--exclude=fsmonitor--daemon.ipc"))
+        #expect(arguments.contains("--exclude=cdk.out/"))
+        #expect(!arguments.contains("--exclude=.git/"))
     }
 
     @Test func developmentBackupStatusReportsInSyncWhenDirectoriesMatch() throws {
@@ -219,6 +238,34 @@ cd+++++++++ NewFolder/
 
         #expect(status.state == .outOfSync)
         #expect(status.sourceOnlyCount == 1)
+    }
+
+    @Test func developmentBackupStatusReportsOutOfSyncWhenGitMetadataDiffers() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProjectPilotBackup-\(UUID().uuidString)", isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent("source", isDirectory: true)
+        let backupURL = rootURL.appendingPathComponent("backup", isDirectory: true)
+        let sourceGitURL = sourceURL.appendingPathComponent(".git", isDirectory: true)
+        let backupGitURL = backupURL.appendingPathComponent(".git", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try FileManager.default.createDirectory(at: sourceGitURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: backupGitURL, withIntermediateDirectories: true)
+        try "ref: refs/heads/main\n".write(
+            to: sourceGitURL.appendingPathComponent("HEAD"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "old\n".write(
+            to: backupGitURL.appendingPathComponent("HEAD"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let status = ProjectPilotViewModel.computeDevelopmentBackupStatus(sourceURL: sourceURL, backupURL: backupURL)
+
+        #expect(status.state == .outOfSync)
+        #expect(status.changedCount == 1)
     }
 
     @Test func nestedRepoResolutionFindsCheckoutByMatchingGitHubRemote() throws {
