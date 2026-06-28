@@ -168,6 +168,26 @@ struct ProjectPilotTests {
         )
     }
 
+    @Test func repoSyncStateReportsLocalChangesWhenCommitsMatchAndWorktreeIsDirty() {
+        let state = ProjectPilotViewModel.repoSyncState(
+            ahead: 0,
+            behind: 0,
+            statusPorcelainOutput: " M ProjectPilotApp/App/ProjectPilotViewModel.swift\n?? Notes.txt\n"
+        )
+
+        #expect(state == .localChanges)
+    }
+
+    @Test func repoSyncStateReportsInSyncWhenCommitsMatchAndWorktreeIsClean() {
+        let state = ProjectPilotViewModel.repoSyncState(
+            ahead: 0,
+            behind: 0,
+            statusPorcelainOutput: "\n"
+        )
+
+        #expect(state == .inSync)
+    }
+
     @Test func developmentBackupRsyncDryRunParserCountsChangeTypes() {
         let output = """
         .d..t.... SomeFolder/

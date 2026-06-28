@@ -534,6 +534,8 @@ struct ProjectPilotPopover: View {
             text = "Sync: No local"
         case .inSync:
             text = "Sync: Up to date"
+        case .localChanges:
+            text = "Local changes"
         case .ahead(let count):
             text = "Sync: Ahead \(count)"
         case .behind(let count):
@@ -543,18 +545,65 @@ struct ProjectPilotPopover: View {
         case .error:
             text = "Sync: Error"
         }
+        let accessibilityText = text.hasPrefix("Sync:") ? text : "Sync: \(text)"
 
         return AnyView(
-            Text(text)
-                .font(.caption2.weight(.semibold))
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(syncBadgeForegroundColor(for: status.state))
+                    .frame(width: 5, height: 5)
+
+                Text(text)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
+                .foregroundStyle(syncBadgeForegroundColor(for: status.state))
                 .background(
                     Capsule(style: .continuous)
-                        .fill(.white.opacity(0.10))
+                        .fill(syncBadgeBackgroundColor(for: status.state))
                 )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(syncBadgeBorderColor(for: status.state), lineWidth: 0.5)
+                )
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(accessibilityText)
                 .help(syncHelpText(for: status))
         )
+    }
+
+    private func syncBadgeForegroundColor(for state: ProjectPilotViewModel.RepoSyncStatus.State) -> Color {
+        switch state {
+        case .inSync:
+            return .green
+        case .localChanges, .ahead, .behind, .diverged:
+            return .orange
+        case .error:
+            return .red
+        default:
+            return .secondary
+        }
+    }
+
+    private func syncBadgeBackgroundColor(for state: ProjectPilotViewModel.RepoSyncStatus.State) -> Color {
+        switch state {
+        case .localChanges:
+            return .orange.opacity(0.18)
+        default:
+            return .white.opacity(0.10)
+        }
+    }
+
+    private func syncBadgeBorderColor(for state: ProjectPilotViewModel.RepoSyncStatus.State) -> Color {
+        switch state {
+        case .localChanges:
+            return .orange.opacity(0.28)
+        default:
+            return .white.opacity(0.08)
+        }
     }
 
     private func syncHelpText(for status: ProjectPilotViewModel.RepoSyncStatus) -> String {
@@ -564,6 +613,8 @@ struct ProjectPilotPopover: View {
         }
 
         switch status.state {
+        case .localChanges:
+            parts.append("Worktree has uncommitted or untracked changes.")
         case .error(let message):
             parts.append(message)
         default:

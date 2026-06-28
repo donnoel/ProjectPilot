@@ -203,6 +203,7 @@ final class ProjectPilotViewModel: ObservableObject {
             case notLocal
             case checking
             case inSync
+            case localChanges
             case ahead(Int)
             case behind(Int)
             case diverged(ahead: Int, behind: Int)
@@ -1093,21 +1094,45 @@ final class ProjectPilotViewModel: ObservableObject {
                 return RepoSyncStatus(state: .error("Unable to read sync status."), localPath: localPathDisplay, checkedAt: checkedAt)
             }
 
+            let statusPorcelainOut: String
             if ahead == 0 && behind == 0 {
-                return RepoSyncStatus(state: .inSync, localPath: localPathDisplay, checkedAt: checkedAt)
+                statusPorcelainOut = try step("git status") {
+                    try runProcess(["/usr/bin/git", "status", "--porcelain"], cwd: localURL)
+                }
+            } else {
+                statusPorcelainOut = ""
             }
-            if ahead > 0 && behind == 0 {
-                return RepoSyncStatus(state: .ahead(ahead), localPath: localPathDisplay, checkedAt: checkedAt)
-            }
-            if ahead == 0 && behind > 0 {
-                return RepoSyncStatus(state: .behind(behind), localPath: localPathDisplay, checkedAt: checkedAt)
-            }
-            return RepoSyncStatus(state: .diverged(ahead: ahead, behind: behind), localPath: localPathDisplay, checkedAt: checkedAt)
+
+            let state = repoSyncState(
+                ahead: ahead,
+                behind: behind,
+                statusPorcelainOutput: statusPorcelainOut
+            )
+            return RepoSyncStatus(state: state, localPath: localPathDisplay, checkedAt: checkedAt)
         } catch let error as PPCLIError {
             return RepoSyncStatus(state: .error(error.message), localPath: localPathDisplay, checkedAt: checkedAt)
         } catch {
             return RepoSyncStatus(state: .error(error.localizedDescription), localPath: localPathDisplay, checkedAt: checkedAt)
         }
+    }
+
+    nonisolated static func repoSyncState(
+        ahead: Int,
+        behind: Int,
+        statusPorcelainOutput: String
+    ) -> RepoSyncStatus.State {
+        if ahead == 0 && behind == 0 {
+            return statusPorcelainOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .inSync
+                : .localChanges
+        }
+        if ahead > 0 && behind == 0 {
+            return .ahead(ahead)
+        }
+        if ahead == 0 && behind > 0 {
+            return .behind(behind)
+        }
+        return .diverged(ahead: ahead, behind: behind)
     }
 
     private func setGitHubRepoVisibilityAsync(_ repo: GitHubRepo, isPrivate: Bool) async {
