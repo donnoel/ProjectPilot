@@ -149,7 +149,7 @@ Project Pilot/
 
 ## Credits
 
-Built with care by Don Noel and Codex collaboration.
+Built by Don Noel and AI collaboration.
 
 ---
 
