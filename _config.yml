@@ -1,0 +1,22 @@
+title: Project Pilot
+description: A macOS menu-bar app for generating known-good Xcode projects.
+tagline: Consistent Xcode projects, from first folder to first push.
+project_label: Don Noel / Projects
+status_label: macOS utility
+github_url: https://github.com/donnoel/ProjectPilot
+url: https://donnoel.github.io
+baseurl: /ProjectPilot
+lang: en-US
+
+remote_theme: donnoel/projects-theme@v1.0.0
+plugins:
+  - jekyll-remote-theme
+
+exclude:
+  - AGENTS.md
+  - AGENTS.project.md
+  - Project PilotApp
+  - Project Pilot.xcodeproj
+  - Project PilotTests
+  - Project PilotUITests
+
