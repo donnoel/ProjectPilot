@@ -215,12 +215,109 @@ struct ProjectPilotTests {
         )
 
         #expect(arguments.contains("--delete"))
+        #expect(arguments.contains("--delete-excluded"))
         #expect(arguments.contains("-rltp"))
         #expect(!arguments.contains("-a"))
+        #expect(!arguments.contains("--remove-source-files"))
         #expect(arguments.contains("--exclude=.DS_Store"))
         #expect(arguments.contains("--exclude=fsmonitor--daemon.ipc"))
         #expect(arguments.contains("--exclude=cdk.out/"))
         #expect(!arguments.contains("--exclude=.git/"))
+        #expect(arguments.suffix(2) == [sourceURL.path + "/", backupURL.path + "/"])
+    }
+
+    @Test func developmentBackupRejectsAnyPairOtherThanGoldenMasterToICloud() {
+        let homeURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProjectPilotHome-\(UUID().uuidString)", isDirectory: true)
+        let sourceURL = homeURL.appendingPathComponent("Development", isDirectory: true)
+        let backupURL = homeURL
+            .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/Development", isDirectory: true)
+
+        #expect(
+            ProjectPilotViewModel.isSafeDevelopmentBackupPair(
+                sourceURL: sourceURL,
+                backupURL: backupURL,
+                homeDirectoryURL: homeURL
+            )
+        )
+        #expect(
+            !ProjectPilotViewModel.isSafeDevelopmentBackupPair(
+                sourceURL: backupURL,
+                backupURL: sourceURL,
+                homeDirectoryURL: homeURL
+            )
+        )
+        #expect(
+            !ProjectPilotViewModel.isSafeDevelopmentBackupPair(
+                sourceURL: sourceURL,
+                backupURL: sourceURL.appendingPathComponent("Backup", isDirectory: true),
+                homeDirectoryURL: homeURL
+            )
+        )
+    }
+
+    @Test func developmentBackupMirrorNeverChangesSource() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProjectPilotMirror-\(UUID().uuidString)", isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent("source", isDirectory: true)
+        let backupURL = rootURL.appendingPathComponent("backup", isDirectory: true)
+        let sourceGitURL = sourceURL.appendingPathComponent(".git", isDirectory: true)
+        let sourceBuildURL = sourceURL.appendingPathComponent("build", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try FileManager.default.createDirectory(at: sourceGitURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sourceBuildURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: backupURL, withIntermediateDirectories: true)
+        try "golden".write(
+            to: sourceURL.appendingPathComponent("Golden.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "ref: refs/heads/main\n".write(
+            to: sourceGitURL.appendingPathComponent("HEAD"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "generated".write(
+            to: sourceBuildURL.appendingPathComponent("Generated.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "stale".write(
+            to: backupURL.appendingPathComponent("Stale.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sourceBefore = try fileSnapshot(at: sourceURL)
+        try runCommand(
+            ProjectPilotViewModel.developmentBackupRsyncArguments(
+                sourceURL: sourceURL,
+                backupURL: backupURL,
+                dryRun: false
+            )
+        )
+        let sourceAfter = try fileSnapshot(at: sourceURL)
+
+        #expect(sourceAfter == sourceBefore)
+        #expect(
+            try String(contentsOf: backupURL.appendingPathComponent("Golden.txt"), encoding: .utf8) == "golden"
+        )
+        #expect(
+            try String(contentsOf: backupURL.appendingPathComponent(".git/HEAD"), encoding: .utf8)
+                == "ref: refs/heads/main\n"
+        )
+        #expect(!FileManager.default.fileExists(atPath: backupURL.appendingPathComponent("Stale.txt").path))
+        #expect(!FileManager.default.fileExists(atPath: backupURL.appendingPathComponent("build").path))
+    }
+
+    @Test func processRunnerHandlesOutputLargerThanPipeCapacity() throws {
+        let output = try ProjectPilotViewModel.runProcess(
+            ["/usr/bin/jot", "20000"],
+            timeoutSeconds: 5
+        )
+
+        #expect(output.hasSuffix("20000\n"))
     }
 
     @Test func developmentBackupStatusReportsInSyncWhenDirectoriesMatch() throws {
@@ -333,9 +430,16 @@ struct ProjectPilotTests {
     }
 
     private func runGit(_ arguments: [String], in directory: URL) throws {
+        try runCommand(["/usr/bin/git"] + arguments, in: directory)
+    }
+
+    private func runCommand(_ arguments: [String], in directory: URL? = nil) throws {
+        guard let executable = arguments.first else {
+            throw NSError(domain: "ProjectPilotTests.Process", code: -1)
+        }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = Array(arguments.dropFirst())
         process.currentDirectoryURL = directory
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -343,8 +447,35 @@ struct ProjectPilotTests {
         process.waitUntilExit()
 
         if process.terminationStatus != 0 {
-            throw NSError(domain: "ProjectPilotTests.Git", code: Int(process.terminationStatus))
+            throw NSError(domain: "ProjectPilotTests.Process", code: Int(process.terminationStatus))
         }
+    }
+
+    private struct FileSnapshot: Equatable {
+        let contents: Data
+        let modificationDate: Date?
+    }
+
+    private func fileSnapshot(at rootURL: URL) throws -> [String: FileSnapshot] {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: keys
+        ) else {
+            return [:]
+        }
+
+        var snapshot: [String: FileSnapshot] = [:]
+        while let fileURL = enumerator.nextObject() as? URL {
+            let values = try fileURL.resourceValues(forKeys: Set(keys))
+            guard values.isRegularFile == true else { continue }
+            let relativePath = String(fileURL.path.dropFirst(rootURL.path.count + 1))
+            snapshot[relativePath] = FileSnapshot(
+                contents: try Data(contentsOf: fileURL),
+                modificationDate: values.contentModificationDate
+            )
+        }
+        return snapshot
     }
 
 }

@@ -247,14 +247,13 @@ final class ProjectPilotViewModel: ObservableObject {
 
     @Published private(set) var developmentBackupStatus: DevelopmentBackupStatus = DevelopmentBackupStatus(
         state: .notChecked,
-        sourcePath: (FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Development", isDirectory: true).path as NSString).abbreviatingWithTildeInPath,
+        sourcePath: (ProjectPilotViewModel.defaultDevelopmentSourceURL().path as NSString).abbreviatingWithTildeInPath,
         backupPath: (ProjectPilotViewModel.defaultDevelopmentBackupURL().path as NSString).abbreviatingWithTildeInPath,
         sourceOnlyCount: 0,
         backupOnlyCount: 0,
         changedCount: 0,
         checkedAt: nil
     )
-    @Published private(set) var isCheckingDevelopmentBackup: Bool = false
     @Published private(set) var isSyncingDevelopmentBackup: Bool = false
 
     private let codexQuotaReader: CodexQuotaReader
@@ -417,12 +416,8 @@ final class ProjectPilotViewModel: ObservableObject {
         refreshGitHubRepos()
     }
 
-    func checkDevelopmentBackupStatus() {
-        Task { await checkDevelopmentBackupStatusAsync() }
-    }
-
-    func syncDevelopmentBackupIfNeeded() {
-        Task { await syncDevelopmentBackupIfNeededAsync() }
+    func ensureDevelopmentBackupIsCurrent() {
+        Task { await syncDevelopmentBackupAsync() }
     }
 
     func setGitHubRepoVisibility(_ repo: GitHubRepo, isPrivate: Bool) {
@@ -560,7 +555,7 @@ final class ProjectPilotViewModel: ObservableObject {
         developmentBackupSyncTask?.cancel()
         developmentBackupSyncTask = Task { [weak self] in
             guard let self else { return }
-            await self.checkAndSyncDevelopmentBackupIfNeededAsync()
+            await self.syncDevelopmentBackupAsync()
 
             while !Task.isCancelled {
                 do {
@@ -568,45 +563,12 @@ final class ProjectPilotViewModel: ObservableObject {
                 } catch {
                     break
                 }
-                await self.checkAndSyncDevelopmentBackupIfNeededAsync()
+                await self.syncDevelopmentBackupAsync()
             }
         }
     }
 
-    private func checkAndSyncDevelopmentBackupIfNeededAsync() async {
-        guard let status = await checkDevelopmentBackupStatusAsync() else { return }
-        if Self.shouldSyncDevelopmentBackup(for: status.state) {
-            await syncDevelopmentBackupIfNeededAsync()
-        }
-    }
-
-    @discardableResult
-    private func checkDevelopmentBackupStatusAsync() async -> DevelopmentBackupStatus? {
-        guard !isCheckingDevelopmentBackup else { return nil }
-        isCheckingDevelopmentBackup = true
-        developmentBackupStatus = DevelopmentBackupStatus(
-            state: .checking,
-            sourcePath: developmentBackupStatus.sourcePath,
-            backupPath: developmentBackupStatus.backupPath,
-            sourceOnlyCount: developmentBackupStatus.sourceOnlyCount,
-            backupOnlyCount: developmentBackupStatus.backupOnlyCount,
-            changedCount: developmentBackupStatus.changedCount,
-            checkedAt: developmentBackupStatus.checkedAt
-        )
-        defer { isCheckingDevelopmentBackup = false }
-
-        let sourceURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Development", isDirectory: true)
-        let backupURL = Self.defaultDevelopmentBackupURL()
-
-        let status = await Task.detached(priority: .utility) {
-            Self.computeDevelopmentBackupStatus(sourceURL: sourceURL, backupURL: backupURL)
-        }.value
-        developmentBackupStatus = status
-        return status
-    }
-
-    private func syncDevelopmentBackupIfNeededAsync() async {
+    private func syncDevelopmentBackupAsync() async {
         guard !isSyncingDevelopmentBackup else { return }
         isSyncingDevelopmentBackup = true
         developmentBackupStatus = DevelopmentBackupStatus(
@@ -622,7 +584,15 @@ final class ProjectPilotViewModel: ObservableObject {
 
         do {
             try await syncDevelopmentBackupToICloudAsync()
-            await checkDevelopmentBackupStatusAsync()
+            developmentBackupStatus = DevelopmentBackupStatus(
+                state: .inSync,
+                sourcePath: developmentBackupStatus.sourcePath,
+                backupPath: developmentBackupStatus.backupPath,
+                sourceOnlyCount: 0,
+                backupOnlyCount: 0,
+                changedCount: 0,
+                checkedAt: Date()
+            )
         } catch {
             developmentBackupStatus = DevelopmentBackupStatus(
                 state: .error(error.localizedDescription),
@@ -637,13 +607,19 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     private func syncDevelopmentBackupToICloudAsync() async throws {
-        let sourceURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Development", isDirectory: true)
+        let sourceURL = Self.defaultDevelopmentSourceURL()
         let backupURL = Self.defaultDevelopmentBackupURL()
 
         try await Task.detached(priority: .utility) {
             let fm = FileManager.default
             var isDirectory: ObjCBool = false
+            guard Self.isSafeDevelopmentBackupPair(
+                sourceURL: sourceURL,
+                backupURL: backupURL,
+                homeDirectoryURL: fm.homeDirectoryForCurrentUser
+            ) else {
+                throw PPCLIError(message: "Backup safety check failed. The local Development folder was not touched.")
+            }
             guard fm.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
                 throw PPCLIError(message: "Local Development folder not found.")
             }
@@ -730,9 +706,9 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     nonisolated static func developmentBackupRsyncArguments(sourceURL: URL, backupURL: URL, dryRun: Bool) -> [String] {
-        var arguments = ["/usr/bin/rsync", "-rltp", "--delete", "--itemize-changes", "--omit-dir-times"]
+        var arguments = ["/usr/bin/rsync", "-rltp", "--delete", "--delete-excluded", "--omit-dir-times"]
         if dryRun {
-            arguments.append("--dry-run")
+            arguments.append(contentsOf: ["--dry-run", "--itemize-changes"])
         }
         for excludedPath in developmentBackupExcludedPaths {
             arguments.append("--exclude=\(excludedPath)")
@@ -742,13 +718,17 @@ final class ProjectPilotViewModel: ObservableObject {
         return arguments
     }
 
-    nonisolated private static func shouldSyncDevelopmentBackup(for state: DevelopmentBackupStatus.State) -> Bool {
-        switch state {
-        case .outOfSync, .backupMissing:
-            return true
-        case .notChecked, .checking, .syncing, .inSync, .checkTimedOut, .sourceMissing, .error:
-            return false
-        }
+    nonisolated static func isSafeDevelopmentBackupPair(
+        sourceURL: URL,
+        backupURL: URL,
+        homeDirectoryURL: URL
+    ) -> Bool {
+        let expectedSourceURL = homeDirectoryURL
+            .appendingPathComponent("Development", isDirectory: true)
+        let expectedBackupURL = developmentBackupURL(homeDirectoryURL: homeDirectoryURL)
+
+        return normalizedBackupURL(sourceURL) == normalizedBackupURL(expectedSourceURL)
+            && normalizedBackupURL(backupURL) == normalizedBackupURL(expectedBackupURL)
     }
 
     nonisolated static func parseDevelopmentBackupRsyncDryRun(_ output: String) -> DevelopmentBackupRsyncDryRunChanges {
@@ -2783,19 +2763,36 @@ Provide:
         return ["/usr/bin/env", "gh"]
     }
 
-    private nonisolated static func runProcess(_ argv: [String], cwd: URL? = nil, timeoutSeconds: TimeInterval? = nil) throws -> String {
+    nonisolated static func runProcess(_ argv: [String], cwd: URL? = nil, timeoutSeconds: TimeInterval? = nil) throws -> String {
         guard let exe = argv.first else { throw PPCLIError(message: "Invalid command.") }
         let args = Array(argv.dropFirst())
+        let fm = FileManager.default
+        let outputDirectoryURL = fm.temporaryDirectory
+            .appendingPathComponent("ProjectPilotProcess-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: outputDirectoryURL, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: outputDirectoryURL) }
+
+        let stdoutURL = outputDirectoryURL.appendingPathComponent("stdout")
+        let stderrURL = outputDirectoryURL.appendingPathComponent("stderr")
+        try Data().write(to: stdoutURL)
+        try Data().write(to: stderrURL)
+        let stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
+        let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+        var handlesAreClosed = false
+        defer {
+            if !handlesAreClosed {
+                try? stdoutHandle.close()
+                try? stderrHandle.close()
+            }
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: exe)
         process.arguments = args
         if let cwd { process.currentDirectoryURL = cwd }
 
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
+        process.standardOutput = stdoutHandle
+        process.standardError = stderrHandle
 
         try process.run()
         if let timeoutSeconds {
@@ -2812,11 +2809,12 @@ Provide:
             process.waitUntilExit()
         }
 
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
+        try? stdoutHandle.close()
+        try? stderrHandle.close()
+        handlesAreClosed = true
 
-        let outStr = String(data: outData, encoding: .utf8) ?? ""
-        let errStr = String(data: errData, encoding: .utf8) ?? ""
+        let outStr = String(data: try Data(contentsOf: stdoutURL), encoding: .utf8) ?? ""
+        let errStr = String(data: try Data(contentsOf: stderrURL), encoding: .utf8) ?? ""
         let outTrimmed = outStr.trimmingCharacters(in: .whitespacesAndNewlines)
         let errTrimmed = errStr.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -3035,7 +3033,7 @@ Provide:
 
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let codexQuotaPollIntervalSeconds: Double = 10
-    nonisolated private static let developmentBackupSyncIntervalSeconds: Double = 300
+    nonisolated private static let developmentBackupSyncIntervalSeconds: Double = 60
     nonisolated private static let developmentBackupCheckTimeoutSeconds: TimeInterval = 120
     nonisolated private static let developmentBackupSyncTimeoutSeconds: TimeInterval = 600
     nonisolated private static let developmentBackupExcludedPaths = [
@@ -3066,12 +3064,25 @@ Provide:
     private static let customPresetPrefix = "custom."
     private static let defaultPresetID = "builtin.ios-app"
 
-    private nonisolated static func defaultDevelopmentBackupURL() -> URL {
+    private nonisolated static func defaultDevelopmentSourceURL() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Development", isDirectory: true)
+    }
+
+    private nonisolated static func defaultDevelopmentBackupURL() -> URL {
+        developmentBackupURL(homeDirectoryURL: FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    private nonisolated static func developmentBackupURL(homeDirectoryURL: URL) -> URL {
+        homeDirectoryURL
             .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent("Mobile Documents", isDirectory: true)
             .appendingPathComponent("com~apple~CloudDocs", isDirectory: true)
             .appendingPathComponent("Development", isDirectory: true)
+    }
+
+    private nonisolated static func normalizedBackupURL(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
     }
 
     private static let builtInPresets: [CreationPreset] = [

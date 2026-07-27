@@ -56,7 +56,7 @@ struct ProjectPilotPopover: View {
             if newValue == .github {
                 vm.ensureGitHubReposLoaded()
             } else if newValue == .backup {
-                vm.checkDevelopmentBackupStatus()
+                vm.ensureDevelopmentBackupIsCurrent()
             }
         }
     }
@@ -357,10 +357,11 @@ struct ProjectPilotPopover: View {
         section("Development Backup") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 10) {
-                    Circle()
-                        .fill(developmentBackupStatusColor)
-                        .frame(width: 9, height: 9)
-                        .padding(.top, 4)
+                    Image(systemName: developmentBackupStatusSymbol)
+                        .foregroundStyle(developmentBackupStatusColor)
+                        .font(.system(size: 14, weight: .semibold))
+                        .padding(.top, 1)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(developmentBackupStatusTitle)
@@ -374,7 +375,7 @@ struct ProjectPilotPopover: View {
 
                     Spacer(minLength: 0)
 
-                    if vm.isCheckingDevelopmentBackup || vm.isSyncingDevelopmentBackup {
+                    if vm.isSyncingDevelopmentBackup {
                         ProgressView()
                             .controlSize(.small)
                     }
@@ -407,21 +408,10 @@ struct ProjectPilotPopover: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 8) {
-                    Button {
-                        vm.syncDevelopmentBackupIfNeeded()
-                    } label: {
-                        Label("Sync", systemImage: "arrow.clockwise")
-                    }
-                    .controlSize(.small)
-                    .disabled(vm.isCheckingDevelopmentBackup || vm.isSyncingDevelopmentBackup)
-
-                    Spacer(minLength: 0)
-                }
             }
         }
         .onAppear {
-            vm.checkDevelopmentBackupStatus()
+            vm.ensureDevelopmentBackupIsCurrent()
         }
     }
 
@@ -460,15 +450,15 @@ struct ProjectPilotPopover: View {
         case .inSync:
             return "Development is in sync"
         case .outOfSync:
-            return "Sync needed"
+            return "Updating backup"
         case .checkTimedOut:
-            return "Backup check needs more time"
+            return "Waiting to retry"
         case .sourceMissing:
             return "Local folder missing"
         case .backupMissing:
-            return "iCloud backup missing"
+            return "Creating iCloud backup"
         case .error:
-            return "Backup sync error"
+            return "Waiting to retry"
         }
     }
 
@@ -483,15 +473,15 @@ struct ProjectPilotPopover: View {
         case .inSync:
             return "The local Development folder matches the iCloud backup."
         case .outOfSync:
-            return "Use Sync to update the iCloud backup."
+            return "ProjectPilot is updating the iCloud backup automatically."
         case .checkTimedOut:
-            return "The folders are large or iCloud is busy. ProjectPilot did not confirm a full match."
+            return "ProjectPilot will try again automatically."
         case .sourceMissing:
             return "The local Development folder could not be found."
         case .backupMissing:
             return "ProjectPilot will create the iCloud backup folder automatically."
         case .error(let message):
-            return message
+            return "\(message) ProjectPilot will try again automatically."
         }
     }
 
@@ -514,12 +504,23 @@ struct ProjectPilotPopover: View {
         switch vm.developmentBackupStatus.state {
         case .inSync:
             return .green
-        case .checking, .syncing, .outOfSync, .checkTimedOut:
+        case .checking, .syncing, .outOfSync, .checkTimedOut, .backupMissing:
             return .orange
-        case .sourceMissing, .backupMissing, .error:
+        case .sourceMissing, .error:
             return .red
         case .notChecked:
             return .secondary
+        }
+    }
+
+    private var developmentBackupStatusSymbol: String {
+        switch vm.developmentBackupStatus.state {
+        case .inSync:
+            return "checkmark.circle.fill"
+        case .sourceMissing, .error:
+            return "exclamationmark.triangle.fill"
+        case .notChecked, .checking, .syncing, .outOfSync, .checkTimedOut, .backupMissing:
+            return "circle.fill"
         }
     }
 
