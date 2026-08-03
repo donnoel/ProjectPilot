@@ -8,7 +8,7 @@ url: https://donnoel.github.io
 baseurl: /ProjectPilot
 lang: en-US
 
-remote_theme: donnoel/projects-theme@v1.0.0
+remote_theme: donnoel/projects-theme@v1.0.1
 plugins:
   - jekyll-remote-theme
 
@@ -19,4 +19,3 @@ exclude:
   - Project Pilot.xcodeproj
   - Project PilotTests
   - Project PilotUITests
-
