@@ -41,6 +41,14 @@ It can also:
 
 ---
 
+## Development backup
+
+ProjectPilot mirrors `~/Development` into iCloud Drive's `Development` folder, including Git history and excluding generated build/dependency folders. The local folder remains the source of truth; files removed locally are also removed from the mirror.
+
+Automatic backups use filesystem notifications instead of rescanning every minute. They wait for 60 seconds of quiet, start no more than once every five minutes, and batch continuous edits for up to 15 minutes before attempting a backup. An hourly reconciliation catches missed events, and failed attempts wait 15 minutes before retrying. Opening the backup tab does not force a copy; **Back up now** explicitly starts one immediately. Changes arriving during a copy remain pending for the next run.
+
+“Backup updated” means the local iCloud Drive copy completed, not that Apple's cloud upload has finished. No backup files or settings need migration.
+
 ## 🎛 Controls
 
 - **Project Name**: Enter the folder/project name to create.

@@ -408,6 +408,9 @@ struct ProjectPilotPopover: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Button("Back up now") { vm.backUpDevelopmentNow() }
+                    .disabled(vm.isSyncingDevelopmentBackup)
+
             }
         }
         .onAppear {
@@ -448,9 +451,9 @@ struct ProjectPilotPopover: View {
         case .syncing:
             return "Syncing to iCloud"
         case .inSync:
-            return "Development is in sync"
+            return "Backup updated"
         case .outOfSync:
-            return "Updating backup"
+            return "Changes waiting for backup"
         case .checkTimedOut:
             return "Waiting to retry"
         case .sourceMissing:
@@ -465,15 +468,15 @@ struct ProjectPilotPopover: View {
     private var developmentBackupStatusDetail: String {
         switch vm.developmentBackupStatus.state {
         case .notChecked:
-            return "ProjectPilot checks this automatically."
+            return "Automatic backup starts after file activity settles."
         case .checking:
             return "ProjectPilot is checking the local Development folder against iCloud Drive."
         case .syncing:
             return "ProjectPilot is updating the iCloud backup."
         case .inSync:
-            return "The local Development folder matches the iCloud backup."
+            return "The latest copy is saved in iCloud Drive. iCloud handles uploading it."
         case .outOfSync:
-            return "ProjectPilot is updating the iCloud backup automatically."
+            return "Changes are batched automatically to reduce disk and CPU use. You can back up now if needed."
         case .checkTimedOut:
             return "ProjectPilot will try again automatically."
         case .sourceMissing:

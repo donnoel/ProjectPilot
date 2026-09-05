@@ -198,7 +198,7 @@ final class ProjectPilotViewModel: ObservableObject {
     @Published private(set) var githubReposError: String? = nil
     @Published private(set) var isRefreshingGitHubRepos: Bool = false
 
-    struct RepoSyncStatus: Equatable {
+    nonisolated struct RepoSyncStatus: Equatable {
         enum State: Equatable {
             case notLocal
             case checking
@@ -217,7 +217,7 @@ final class ProjectPilotViewModel: ObservableObject {
 
     @Published private(set) var githubRepoSyncStatus: [String: RepoSyncStatus] = [:]
 
-    struct DevelopmentBackupStatus: Equatable {
+    nonisolated struct DevelopmentBackupStatus: Equatable {
         enum State: Equatable {
             case notChecked
             case checking
@@ -230,7 +230,7 @@ final class ProjectPilotViewModel: ObservableObject {
             case error(String)
         }
 
-        let state: State
+        var state: State
         let sourcePath: String
         let backupPath: String
         let sourceOnlyCount: Int
@@ -259,6 +259,7 @@ final class ProjectPilotViewModel: ObservableObject {
     private let codexQuotaReader: CodexQuotaReader
     private var codexQuotaPollingTask: Task<Void, Never>? = nil
     private var developmentBackupSyncTask: Task<Void, Never>? = nil
+    private var developmentBackupMonitor: DevelopmentBackupMonitor?
 
     var canRetryGitHub: Bool {
         pendingGitHubRetryName != nil && pendingGitHubRetryPath != nil
@@ -420,6 +421,10 @@ final class ProjectPilotViewModel: ObservableObject {
         Task { await syncDevelopmentBackupAsync() }
     }
 
+    func backUpDevelopmentNow() {
+        Task { await syncDevelopmentBackupAsync(force: true) }
+    }
+
     func setGitHubRepoVisibility(_ repo: GitHubRepo, isPrivate: Bool) {
         Task { await setGitHubRepoVisibilityAsync(repo, isPrivate: isPrivate) }
     }
@@ -522,8 +527,7 @@ final class ProjectPilotViewModel: ObservableObject {
     private func startCodexQuotaPolling() {
         codexQuotaPollingTask?.cancel()
         codexQuotaPollingTask = Task { [weak self] in
-            guard let self else { return }
-            await self.refreshCodexQuotaAsync()
+            await self?.refreshCodexQuotaAsync()
 
             while !Task.isCancelled {
                 do {
@@ -531,6 +535,7 @@ final class ProjectPilotViewModel: ObservableObject {
                 } catch {
                     break
                 }
+                guard let self else { return }
                 await self.refreshCodexQuotaAsync()
             }
         }
@@ -553,23 +558,31 @@ final class ProjectPilotViewModel: ObservableObject {
 
     private func startDevelopmentBackupSyncLoop() {
         developmentBackupSyncTask?.cancel()
+        developmentBackupMonitor = DevelopmentBackupMonitor(
+            root: Self.defaultDevelopmentSourceURL(), exclusions: Self.developmentBackupExcludedPaths
+        )
         developmentBackupSyncTask = Task { [weak self] in
-            guard let self else { return }
-            await self.syncDevelopmentBackupAsync()
-
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .seconds(Self.developmentBackupSyncIntervalSeconds))
+                    try await Task.sleep(for: .seconds(30))
                 } catch {
                     break
                 }
+                guard let self else { return }
                 await self.syncDevelopmentBackupAsync()
             }
         }
     }
 
-    private func syncDevelopmentBackupAsync() async {
+    private func syncDevelopmentBackupAsync(force: Bool = false) async {
         guard !isSyncingDevelopmentBackup else { return }
+        guard let monitor = developmentBackupMonitor else { return }
+        guard monitor.beginIfNeeded(force: force) else {
+            if monitor.hasPendingChanges, developmentBackupStatus.state == .inSync {
+                developmentBackupStatus.state = .outOfSync
+            }
+            return
+        }
         isSyncingDevelopmentBackup = true
         developmentBackupStatus = DevelopmentBackupStatus(
             state: .syncing,
@@ -584,8 +597,9 @@ final class ProjectPilotViewModel: ObservableObject {
 
         do {
             try await syncDevelopmentBackupToICloudAsync()
+            monitor.finished(succeeded: true)
             developmentBackupStatus = DevelopmentBackupStatus(
-                state: .inSync,
+                state: monitor.hasPendingChanges ? .outOfSync : .inSync,
                 sourcePath: developmentBackupStatus.sourcePath,
                 backupPath: developmentBackupStatus.backupPath,
                 sourceOnlyCount: 0,
@@ -594,6 +608,7 @@ final class ProjectPilotViewModel: ObservableObject {
                 checkedAt: Date()
             )
         } catch {
+            monitor.finished(succeeded: false)
             developmentBackupStatus = DevelopmentBackupStatus(
                 state: .error(error.localizedDescription),
                 sourcePath: developmentBackupStatus.sourcePath,
@@ -2794,13 +2809,11 @@ Provide:
         process.standardOutput = stdoutHandle
         process.standardError = stderrHandle
 
+        let completion = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in completion.signal() }
         try process.run()
         if let timeoutSeconds {
-            let deadline = Date().addingTimeInterval(timeoutSeconds)
-            while process.isRunning && Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-            if process.isRunning {
+            if completion.wait(timeout: .now() + timeoutSeconds) == .timedOut, process.isRunning {
                 process.terminate()
                 process.waitUntilExit()
                 throw PPCLIError(message: "Backup operation timed out. Try again after iCloud finishes current file activity.", isTimeout: true)
@@ -3033,7 +3046,6 @@ Provide:
 
     private static let codexBundleIdentifier = "com.openai.codex"
     private static let codexQuotaPollIntervalSeconds: Double = 10
-    nonisolated private static let developmentBackupSyncIntervalSeconds: Double = 60
     nonisolated private static let developmentBackupCheckTimeoutSeconds: TimeInterval = 120
     nonisolated private static let developmentBackupSyncTimeoutSeconds: TimeInterval = 600
     nonisolated private static let developmentBackupExcludedPaths = [
