@@ -15,8 +15,9 @@ This is an Apple-platform app repository. Work from concrete repository evidence
 ## Authorization
 
 - For an audit, review, explanation, or diagnosis, inspect and report; do not edit unless the request also asks for a change.
-- For a fix, feature, build, or refactor, make the smallest in-scope local change and run relevant non-destructive validation.
-- Ask before destructive actions, external writes, purchases, new dependencies, or a material expansion of scope. Ask about other ambiguity only when it could change product behavior or the safe implementation.
+- For a fix, feature, build, or refactor, carry the smallest in-scope local change through investigation, implementation, and relevant non-destructive validation without step-by-step approval. Make routine technical decisions and give progress updates instead of permission requests.
+- Commit, push, deploy, message others, add dependencies, make purchases, perform destructive actions or other external writes, or change system/live state only when explicitly requested or approved. Authorization for the named action and target carries through the task; ask again only if the target, scope, or risk materially changes.
+- Investigate technical uncertainty before asking. Pause only for a consequential unresolved product, safety, or scope decision, or missing authorization for the actions above. Complete safe preparation before asking once, and preserve mandatory platform confirmations and project-specific release gates.
 
 ## Workflow
 
