@@ -7,28 +7,38 @@ struct TicksView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let session = model.activeSession {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label(session.pausedAt == nil ? "Tick running" : "Tick paused",
-                          systemImage: session.pausedAt == nil ? "record.circle" : "pause.circle")
-                        .font(.subheadline)
-                    Text(model.activeSpaceName)
-                        .font(.title3.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 12) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(model.activeSpaceName)
+                            .font(.title3.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Label(session.pausedAt == nil ? "Tick running" : "Tick paused",
+                              systemImage: session.pausedAt == nil ? "record.circle" : "pause.circle")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text(Self.durationText(session.duration(at: context.date)))
-                            .font(.system(.largeTitle, design: .rounded).monospacedDigit())
+                            .font(.system(size: 56, weight: .medium, design: .rounded).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                            .frame(maxWidth: .infinity)
+                            .multilineTextAlignment(.center)
                             .accessibilityLabel("Elapsed time")
                             .accessibilityValue(Self.spokenDuration(session.duration(at: context.date)))
                     }
                     Button("Stop Tick", systemImage: "stop.fill") {
                         Task { await model.stop() }
                     }
+                    .controlSize(.large)
                     .disabled(!model.canStop)
                     .accessibilityHint("Stops the current Tick and saves its recorded time.")
                     .accessibilityIdentifier("ticks.stop")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
+                .frame(maxWidth: .infinity)
+                .padding(18)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
             }
 
