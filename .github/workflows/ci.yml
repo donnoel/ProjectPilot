@@ -9,12 +9,24 @@ on:
 jobs:
   build-and-test:
     runs-on: macos-26
+    defaults:
+      run:
+        working-directory: ProjectPilot
     env:
       DERIVED_DATA: ${{ github.workspace }}/DerivedData
       RESULT_BUNDLE: ${{ github.workspace }}/TestResults/ProjectPilot.xcresult
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          path: ProjectPilot
+
+      - name: Checkout shared TickCore package
+        uses: actions/checkout@v5
+        with:
+          repository: donnoel/Tick
+          ref: 36abf9721a38829380cc655fef0bfc7280af51a3
+          path: Tick
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -52,6 +64,13 @@ jobs:
             -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath "$DERIVED_DATA" \
             -resultBundlePath "$RESULT_BUNDLE" \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= \
+            CODE_SIGN_ENTITLEMENTS= \
+            SWIFT_SUPPRESS_WARNINGS=NO \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
             clean test
 
       - name: Upload xcodebuild artifacts
