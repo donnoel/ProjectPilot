@@ -1,164 +1,67 @@
-# 🧭 **Project Pilot**
-### *A liquid-glass menu bar launcher that generates “known-good” Xcode projects in one click.*
+# ProjectPilot
 
-<p align="center">
-  <img src="https://img.shields.io/badge/SwiftUI-MenuBarExtra-orange?logo=swift">
-  <img src="https://img.shields.io/badge/Platform-macOS-blue">
-  <img src="https://img.shields.io/badge/Project%20Gen-Template%20Xcodeproj-purple">
-  <img src="https://img.shields.io/badge/GitHub-gh%20CLI-green?logo=github">
-</p>
+ProjectPilot is a native macOS menu bar companion for Ticks, Codex usage,
+GitHub repositories, and development backups.
 
----
+## Tabs
 
-## ✨ What is Project Pilot?
+- **Ticks** — choose an existing Space, see the active or paused Tick, and
+  Start/Stop recording. Create and manage Spaces in Ticks on iPhone or iPad.
+- **Codex** — inspect usage limits and credits from local Codex session data.
+- **GitHub** — browse repositories and their created/updated timestamps.
+- **Backup** — check and update the development-folder mirror in iCloud Drive.
 
-**Project Pilot** is a macOS menu bar utility that creates new Xcode projects using a **golden template `.xcodeproj`** as the source of truth.
+Ticks is the initial tab. Your selected tab is remembered across launches.
+Basic and Advanced, their Create button, and scaffold shortcuts have been
+removed from the interface. The underlying scaffold engine and its tests remain
+in the repository.
 
-Instead of generating “close enough” settings, Project Pilot produces a project that **matches your known-good Xcode configuration**, changing only the project name (and platform selection), so you get consistent build settings, structure, and behavior every time.
+## Ticks setup
 
-It can also:
-- initialize a git repo,
-- create a GitHub repo via `gh`,
-- push the initial commit to remote branch `main`,
-- and open the project in Xcode.
+Keep the `ProjectPilot` and `Tick` checkouts alongside one another. ProjectPilot
+imports `../Tick/Package.swift` as the first-party `TickCore` library; both apps
+use the same data format, CloudKit transport, and conflict rules.
 
----
+Live sync requires a signed ProjectPilot build authorized for `iCloud.dn.tick`,
+with the same iCloud account and CloudKit environment as the mobile builds.
+Debug uses Development; Release uses Production. Spaces in one environment do
+not appear in the other. The Mac development provisioning profile was created and the live connection
+verified on September 7, 2026.
 
-## 💎 Core Features
+The Mac keeps an atomic local cache and retries pending changes. It shows when
+an action is saved locally and waiting for iCloud. “Last checked” confirms the
+Mac's server check; it does not claim that a receiving phone or widget has
+already refreshed. Tick's existing physical widget Stop-propagation issue remains
+an explicit validation checkpoint.
 
-| Feature | Description |
-|--------|-------------|
-| 🧱 **Template-Accurate Xcode Projects** | Generates projects by transforming a golden `.xcodeproj` template so settings match exactly. |
-| 🧩 **Platform Selection** | Create a project for **iOS**, **macOS**, **tvOS**, or any combination supported by the template. |
-| 🪄 **One-Click Bootstrap** | Creates folders + starter SwiftUI app + tests + assets with a clean, consistent layout. |
-| ✅ **Starter CI Workflow** | Generates `.github/workflows/ci.yml` per project with project-specific scheme/path and destination-aware test execution. |
-| 🧼 **Clean Git Start** | Initializes git, writes a sensible `.gitignore` (including `xcuserdata/`), and commits “Initial commit.” |
-| ☁️ **GitHub Repo Creation** | Creates a repo using `gh` and pushes automatically. |
-| 🔒 **Public/Private Toggle** | Choose whether the GitHub repo is created as public or private. |
-| 📊 **Codex Quota Tab** | Shows live Codex 5-hour + weekly usage limits and credits from local Codex session data. |
-| 🧊 **Liquid Glass UI** | Compact, premium-looking popover with macOS visual effect styling. |
-| 🔁 **Runs at Login** | Registers as a Login Item so it starts automatically after you log in. |
+See [Ticks integration](docs/TICKS_INTEGRATION.md) for signing, storage, account
+isolation, conflict behavior, tests, and the three-device delivery checks.
 
----
+## Build and run
+
+Open `ProjectPilot.xcodeproj` in Xcode, or use:
+
+```sh
+./script/build_and_run.sh --build-only
+./script/build_and_run.sh --verify
+```
+
+The script uses existing signing profiles and treats warnings as errors.
+The default Run action stops the current ProjectPilot, builds, and launches the
+new build. It does not replace the installed app or change Apple provisioning.
+GitHub features require the existing `gh` CLI to be authenticated.
 
 ## Development backup
 
-ProjectPilot mirrors `~/Development` into iCloud Drive's `Development` folder, including Git history and excluding generated build/dependency folders. The local folder remains the source of truth; files removed locally are also removed from the mirror.
+ProjectPilot mirrors `~/Development` into iCloud Drive's `Development` folder,
+including Git history and excluding generated build/dependency folders. The local
+folder is the source of truth; files removed locally are removed from the mirror.
 
-Automatic backups use filesystem notifications instead of rescanning every minute. They wait for 60 seconds of quiet, start no more than once every five minutes, and batch continuous edits for up to 15 minutes before attempting a backup. An hourly reconciliation catches missed events, and failed attempts wait 15 minutes before retrying. Opening the backup tab does not force a copy; **Back up now** explicitly starts one immediately. Changes arriving during a copy remain pending for the next run.
+Automatic backups use filesystem notifications. They wait for 60 seconds of quiet,
+start no more than once every five minutes, and batch continuous edits for up to
+15 minutes. An hourly reconciliation catches missed events; failed attempts wait
+15 minutes before retrying. Opening Backup does not force a copy. **Back up now**
+starts one immediately. Changes arriving during a copy remain pending.
 
-“Backup updated” means the local iCloud Drive copy completed, not that Apple's cloud upload has finished. No backup files or settings need migration.
-
-## 🎛 Controls
-
-- **Project Name**: Enter the folder/project name to create.
-- **Platforms**: Tap the platform “pills” to select iOS/macOS/tvOS.
-- **Mode Tabs**: Switch between **Basic**, **Advanced**, and **Codex** views.
-- **GitHub**
-  - Toggle **Public repo** on/off.
-  - GitHub tab repository list shows each repo's created and updated timestamps.
-- **Post-Create**
-  - Optionally open in Xcode, open in Codex, open CLI in the project folder, reveal in Finder, and open Safari to the GitHub project.
-- **Codex Tab**
-  - Shows near-real-time quota status (5-hour usage, weekly usage, credits) from `~/.codex/sessions` rollout logs.
-- **Create**: Generates the project, bootstraps git, creates/pushes GitHub repo (if enabled), then opens in Xcode.
-- **Quit**: Terminates Project Pilot.
-
----
-
-## 🧠 How it works
-
-Project Pilot follows a predictable pipeline:
-
-1. **Create folder** for the new project
-2. **Write starter source files** (SwiftUI entry, basic content, tests, assets)
-3. **Generate starter project metadata** (README, AGENTS files, and `.github/workflows/ci.yml`)
-4. **Generate `.xcodeproj`** by:
-   - reading the golden template `project.pbxproj`
-   - replacing template identifiers with your project name
-   - updating supported platforms based on selection
-5. **Initialize git**, write `.gitignore` (including `xcuserdata/`), commit
-6. **Create GitHub repo** with `gh repo create` (public/private)
-7. **Push to remote branch `main`** and set GitHub default branch to `main`
-8. **Open in Xcode**
-
----
-
-## 🧱 Architecture Overview
-
-### **Project PilotViewModel (@MainActor)**
-The orchestration brain:
-- Validates inputs and selection rules
-- Runs the creation pipeline in sequence
-- Surfaces status and failure messages to the UI
-
-### **Process Runner**
-A small wrapper around `Process` used to run:
-- `git`
-- `gh`
-- any other CLI operations required for the pipeline
-
-### **Template Project Writer**
-- Loads the golden pbxproj text
-- Applies safe name substitutions + platform adjustments
-- Writes the resulting `.xcodeproj` to disk
-
-### **UI (SwiftUI MenuBarExtra)**
-- Compact popover UI
-- Liquid-glass material background with layered card highlights
-- Premium button/pill styling
-
----
-
-## 📁 Project Structure
-
-```text
-Project Pilot/
-├── Project PilotApp/
-│   ├── App/
-│   │   ├── Project PilotApp.swift
-│   │   ├── Project PilotPopover.swift
-│   │   └── Project PilotViewModel.swift
-│   └── Resources/
-│       └── Assets.xcassets/
-├── Project PilotTests/
-└── Project PilotUITests/
-```
-
----
-
-## 🚀 Getting Started
-
-### Requirements
-- macOS
-- Xcode
-- Git
-- GitHub CLI (`gh`) if you want automatic repo creation
-
-### Setup
-1. Open `Project Pilot.xcodeproj` in Xcode
-2. Build & run the **Project Pilot** scheme
-3. (Optional) Authenticate GitHub CLI:
-   - `gh auth login`
-4. Click the menu bar icon
-5. Enter a project name, choose platforms, choose GitHub visibility
-6. Click **Create**
-
----
-
-## 🧭 Notes & Conventions
-
-- **Repo names** are sanitized for GitHub (spaces are converted into a safe format).
-- If `gh` is missing or not authenticated, Project Pilot will fail that step with a readable status message.
-- GitHub remotes are normalized to `https://github.com/...` and use `gh auth` credentials for git network operations.
-- The generated project is designed to mirror your template’s settings, so the template is the “contract.”
-
----
-
-## Credits
-
-Built with care by **Don Noel** and Codex collaboration.
-
----
-
-> *Project Pilot is designed to make starting a new Xcode project feel instant, consistent, and calm.*
+“Backup updated” means the local iCloud Drive copy completed, not that Apple's
+cloud upload has finished. Existing backup settings and data are unchanged.

@@ -5,12 +5,13 @@ import SwiftUI
 struct ProjectPilotPopover: View {
     @ObservedObject var vm: ProjectPilotViewModel
 
-    @State private var mode: Mode = .basic
+    @ObservedObject var ticks: TicksViewModel
+    @AppStorage("projectPilot.selectedTab") private var storedMode = Mode.ticks.rawValue
+    private var mode: Mode { Mode(rawValue: storedMode) ?? .ticks }
     @State private var confirmingVisibilityRepo: ProjectPilotViewModel.GitHubRepo? = nil
 
     enum Mode: String, CaseIterable, Identifiable {
-        case basic = "Basic"
-        case advanced = "Advanced"
+        case ticks = "Ticks"
         case codex = "Codex"
         case github = "GitHub"
         case backup = "Backup"
@@ -25,15 +26,10 @@ struct ProjectPilotPopover: View {
             VStack(alignment: .leading, spacing: 10) {
                 header
                 modePicker
-                if mode != .codex && mode != .github && mode != .backup {
-                    progressTimeline
-                }
 
                 switch mode {
-                case .basic:
-                    basicSections
-                case .advanced:
-                    advancedSections
+                case .ticks:
+                    TicksView(model: ticks)
                 case .codex:
                     codexSections
                 case .github:
@@ -42,22 +38,28 @@ struct ProjectPilotPopover: View {
                     backupSections
                 }
 
-                feedbackSection
-
                 Divider().opacity(0.35)
 
-                actions
-                keyboardShortcutsBridge
+                HStack {
+                    Spacer()
+                    Button("Quit") { NSApplication.shared.terminate(nil) }
+                }
             }
             .padding(14)
         }
         .frame(width: 520, alignment: .topLeading)
-        .onChange(of: mode) { _, newValue in
-            if newValue == .github {
-                vm.ensureGitHubReposLoaded()
-            } else if newValue == .backup {
-                vm.ensureDevelopmentBackupIsCurrent()
-            }
+        .task {
+            ticks.beginMonitoring()
+            activate(mode)
+        }
+        .onChange(of: mode) { _, newValue in activate(newValue) }
+    }
+
+    private func activate(_ mode: Mode) {
+        if mode == .github {
+            vm.ensureGitHubReposLoaded()
+        } else if mode == .backup {
+            vm.ensureDevelopmentBackupIsCurrent()
         }
     }
 
@@ -85,7 +87,7 @@ struct ProjectPilotPopover: View {
     }
 
     private var modePicker: some View {
-        Picker("Mode", selection: $mode) {
+        Picker("Tab", selection: Binding(get: { mode }, set: { storedMode = $0.rawValue })) {
             ForEach(Mode.allCases) { item in
                 Text(item.rawValue).tag(item)
             }
@@ -142,21 +144,6 @@ struct ProjectPilotPopover: View {
         case .failure: return .red.opacity(0.5)
         case .inProgress: return .blue.opacity(0.4)
         case .pending, .skipped: return .white.opacity(0.18)
-        }
-    }
-
-    private var basicSections: some View {
-        Group {
-            projectSection
-            platformsSection
-            githubSection
-        }
-    }
-
-    private var advancedSections: some View {
-        Group {
-            templateSection
-            postCreateSection
         }
     }
 
@@ -1118,43 +1105,6 @@ struct ProjectPilotPopover: View {
         }
         .padding(.vertical, 7)
         .disabled(isDisabled)
-    }
-
-    private var actions: some View {
-        HStack(spacing: 10) {
-            Button {
-                vm.createProjectSkeleton()
-            } label: {
-                Label("Create", systemImage: "sparkles")
-            }
-            .keyboardShortcut(.defaultAction)
-            .disabled(!vm.canCreateProject)
-            .buttonStyle(.borderedProminent)
-
-            Spacer()
-
-            Button("Quit") { NSApplication.shared.terminate(nil) }
-        }
-    }
-
-    private var keyboardShortcutsBridge: some View {
-        VStack(spacing: 0) {
-            Button("") {
-                vm.retryGitHubSetup()
-            }
-            .keyboardShortcut("r", modifiers: [.command])
-            .disabled(!vm.canRetryGitHub || vm.isRunning)
-            .frame(width: 0, height: 0)
-            .opacity(0.001)
-
-            Button("") {
-                vm.clearTransientFeedback()
-            }
-            .keyboardShortcut(.cancelAction)
-            .disabled(vm.statusLine == nil && !vm.hasDetailLogs)
-            .frame(width: 0, height: 0)
-            .opacity(0.001)
-        }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

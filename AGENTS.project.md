@@ -3,34 +3,34 @@
 # ProjectPilot (macOS) Project Guide for Agents
 
 ## Product intent
-**ProjectPilot** is a macOS menu bar app that scaffolds known-good Xcode projects quickly and predictably.
+**ProjectPilot** is a macOS menu bar companion for Ticks, Codex usage, GitHub repositories, and development backups.
 Core values: **consistency, reliability, local-first defaults, calm UX**.
 
-## Current product phase (updated)
-We have a robust scaffold pipeline with quality-of-life UX:
-1) Project creation supports local folder creation, starter SwiftUI files, assets, tests, and `.xcodeproj` generation from a template pbxproj.
-2) Platform targeting supports iOS, macOS, tvOS, with platform-aware project settings.
-3) Git bootstrapping initializes local git, commits initial content, and keeps local default branch as `main`.
-4) GitHub automation supports optional repo creation via `gh`, public/private visibility, remote name `github`, remote default branch `main`, and push retry without restarting full scaffold.
-5) Project location is user-selectable (not fixed to one directory), with persisted selection.
-6) Presets are supported (built-in + custom) and can store platforms, template profile, and GitHub visibility defaults.
-7) Template profiles are supported so users can scaffold from multiple golden starter variants.
-8) Post-create checklist actions include open in Xcode, open in Codex, open CLI in the project folder, reveal in Finder, and open Safari to the GitHub project page.
-9) Inline validation hints appear before Create for project name (including requiring at least one letter or number).
-10) Creation progress is visible with a compact step timeline (Folder → Xcodeproj → Git → GitHub → Open).
-11) Failure diagnostics include an expandable details log panel with copy-to-clipboard support.
-12) The popover separates **Basic** vs **Advanced** sections and supports keyboard-first flows (Enter create, Cmd+R retry, Esc clear status).
-13) After a successful create, project form inputs reset to blank so the next scaffold starts clean.
-14) The popover includes a **Codex** balance tab that reads local Codex session rollout data and shows near-real-time 5-hour, weekly, and credit usage status.
+## Current product phase
 
-Current focus should be reliability, warning-free builds, and predictable generation behavior (especially honoring preset/platform intent).
+The active tabs are **Ticks, Codex, GitHub, Backup**. The selected tab is persisted;
+Ticks is the initial default. Basic/Advanced, Create, pipeline progress and scaffold
+keyboard shortcuts are removed from the UI. The legacy scaffold engine remains
+internally and its invariants below still apply when touching that code.
 
-## Architecture snapshot (current)
-- **SwiftUI MenuBarExtra** app surface with a compact popover.
-- **MVVM**: `ProjectPilotViewModel` (`@MainActor`) orchestrates user inputs and pipeline state.
-- **Pipeline orchestration** lives in the view model with explicit step states and status messaging.
-- **Process runner** wraps shell execution for `git` and `gh`, capturing output for status/details.
-- **Template writer** generates project files and writes a customized `.xcodeproj` from embedded pbxproj text.
+Ticks can list unarchived Spaces and Start/Stop a timer. Space creation, editing,
+archiving, manual time, voice memos and Auto Tick configuration stay in Tick.
+
+## Architecture snapshot
+
+- SwiftUI `MenuBarExtra` hosts `ProjectPilotPopover`.
+- `ProjectPilotViewModel` owns existing Codex/GitHub/backup and legacy scaffold logic.
+- `TicksViewModel` owns the Ticks UI; `TicksStore` is an actor for the Mac cache,
+  pending uploads, account binding and CloudKit synchronization.
+- `../Tick/Package.swift` provides the first-party `TickCore` package. The mobile
+  app/widget compile the same sources directly. Do not fork its schema or merge rules.
+- The Mac cache is separate from Tick's App Group storage. Read
+  `docs/TICKS_INTEGRATION.md` before changing timer, cloud or delivery behavior.
+- The app uses its original MenuBarExtra scene; the temporary UI-test window was
+  removed. Automated Ticks coverage is in the unit tests and shared TickCore tests.
+- Live cloud access requires the ProjectPilot provisioning profile; local fixture
+  tests do not prove physical-device sync. The previous Tick widget propagation
+  checkpoint remains unverified until tested on devices.
 
 ## Concurrency rules (important)
 We are using Swift 6-era concurrency checks. Do NOT silence them with broad isolation.
@@ -38,7 +38,7 @@ We are using Swift 6-era concurrency checks. Do NOT silence them with broad isol
 - File IO and process execution helpers should stay deterministic and avoid blocking UI.
 - Any shared mutable non-UI state introduced later should use actor/service isolation.
 
-## Scaffold behavior invariants (do not regress)
+## Legacy scaffold behavior invariants (do not regress when touching that code)
 When user creates a project:
 1) Validate project name first.
 2) Create folder and project files.
@@ -54,8 +54,8 @@ Additional expectations:
 - Error messaging should be plain language and actionable.
 
 ## UX rules
-- Keep defaults simple (Basic mode) and avoid overwhelming first-time users.
-- Advanced controls should remain discoverable but optional.
+- Keep the Ticks tab focused on selecting a Space and starting/stopping time.
+- Never expose Space management or scaffold actions in the Ticks flow.
 - Preserve keyboard-first affordances and clear status feedback.
 - Keep the popover responsive and foreground-friendly for folder selection and actions.
 

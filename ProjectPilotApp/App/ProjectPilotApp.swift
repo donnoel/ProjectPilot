@@ -3,23 +3,20 @@ import SwiftUI
 
 @main
 struct ProjectPilotApp: App {
+    @NSApplicationDelegateAdaptor(TicksCloudNotificationDelegate.self) private var cloudNotifications
+    @StateObject private var ticks = TicksViewModel(automaticallySyncs: true)
     @StateObject private var vm = ProjectPilotViewModel()
 
     init() {
-        // A test host must not change the installed app's login-item registration.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
-        // Auto-launch at login (boot) for a menu bar utility like this.
-        // SMAppService.mainApp is the modern, built-in mechanism (no helper app).
         do {
             try SMAppService.mainApp.register()
-        } catch {
-            // Non-fatal: the app still works.
-        }
+        } catch {}
     }
 
     var body: some Scene {
         MenuBarExtra("ProjectPilot", systemImage: "hammer.fill") {
-            ProjectPilotPopover(vm: vm)
+            ProjectPilotPopover(vm: vm, ticks: ticks)
                 .frame(width: 520, alignment: .topLeading)
                 .fixedSize(horizontal: false, vertical: true)
         }
