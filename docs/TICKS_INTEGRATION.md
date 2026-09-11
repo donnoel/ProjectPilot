@@ -15,7 +15,7 @@ package or new server is required. Commit/review changes in both repositories
 together when changing this integration.
 
 `TicksViewModel` owns Mac UI state. `TicksStore` owns file access and cloud work
-on an actor. `TickTimerMutation` supplies widget/Mac Start/Stop and the mobile
+on an actor. `TickTimerMutation` supplies widget/Mac Start/Pause/Resume/Stop and the mobile
 app's paused Stop date calculation. Cloud mutations preserve the full snapshot,
 including session notes and Auto Tick rules that have no Mac editing controls.
 Voice memo files remain outside this integration.
@@ -55,12 +55,14 @@ check; signing and reading cloud data alone do not prove that round trip.
 
 ## Behavior and recovery
 
-- Start/Stop refresh first when online. The action keeps the time the user clicked.
+- Start/Pause/Resume/Stop refresh first when online. The action keeps the time the user clicked.
 - Offline capture requires a previously loaded, account-bound cloud snapshot.
   Changes persist locally and retry; authentication/data errors block mutation.
 - Stop targets the displayed session ID, never a replacement timer that arrived
   during refresh. Repeated Stop is harmless. Stopping a paused session excludes
   paused time.
+- Pause and Resume also target the displayed session ID. Repeated actions are
+  harmless, and elapsed time stays frozen while paused.
 - Existing Tick merge rules apply: Stop is terminal, deletions stay deleted, and
   concurrent starts retain their records but converge to one active timer.
 - Refresh runs on opening Ticks, wake, cloud notification and a periodic retry
@@ -78,10 +80,10 @@ default package warning suppression otherwise conflicts with warnings-as-errors.
 AppIntents is linked for Xcode's metadata extraction pass, including test bundles.
 
 Run shared tests with `swift test --package-path ../Tick -Xswiftc -warnings-as-errors`.
-ProjectPilot unit tests cover three simulated clients, retry after relaunch,
+ProjectPilot unit tests cover three simulated clients, pause/resume, retry after relaunch,
 optimistic conflicts, account isolation, corrupt/missing records and stale Stop.
 The temporary debug UI-test window was removed to restore the original menu-bar
-scene. Ticks Start/Stop and tab restoration require manual UI verification;
+scene. Ticks Start/Pause/Resume/Stop and tab restoration require manual UI verification;
 the original UI-test template does not cover those flows.
 
 Before delivery, verify a signed Mac start → iPhone stop, iPad start → Mac stop,

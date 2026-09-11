@@ -43,6 +43,8 @@ final class TicksViewModel: ObservableObject {
     }
 
     var canStop: Bool { !isBusy && !writesBlocked && state.canRecord && activeSession != nil }
+    var canPause: Bool { canStop && activeSession?.pausedAt == nil }
+    var canResume: Bool { canStop && activeSession?.pausedAt != nil }
 
     struct WeeklySpace: Identifiable {
         let id: UUID
@@ -104,6 +106,18 @@ final class TicksViewModel: ObservableObject {
         guard canStart, let projectID = selectedSpaceID else { return }
         let date = Date.now
         await perform { try await self.store.start(projectID: projectID, at: date) }
+    }
+
+    func pause() async {
+        guard canPause, let sessionID = activeSession?.id else { return }
+        let date = Date.now
+        await perform { try await self.store.pause(sessionID: sessionID, at: date) }
+    }
+
+    func resume() async {
+        guard canResume, let sessionID = activeSession?.id else { return }
+        let date = Date.now
+        await perform { try await self.store.resume(sessionID: sessionID, at: date) }
     }
 
     func stop() async {

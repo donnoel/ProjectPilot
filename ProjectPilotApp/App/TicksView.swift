@@ -29,13 +29,33 @@ struct TicksView: View {
                             .accessibilityLabel("Elapsed time")
                             .accessibilityValue(Self.spokenDuration(session.duration(at: context.date)))
                     }
-                    Button("Stop Tick", systemImage: "stop.fill") {
-                        Task { await model.stop() }
+                    HStack(spacing: 10) {
+                        if session.pausedAt == nil {
+                            Button("Pause Tick", systemImage: "pause.fill") {
+                                Task { await model.pause() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!model.canPause)
+                            .accessibilityHint("Pauses the active Tick without recording the paused time.")
+                            .accessibilityIdentifier("ticks.pause")
+                        } else {
+                            Button("Resume Tick", systemImage: "play.fill") {
+                                Task { await model.resume() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!model.canResume)
+                            .accessibilityHint("Resumes the paused Tick.")
+                            .accessibilityIdentifier("ticks.resume")
+                        }
+
+                        Button("Stop Tick", systemImage: "stop.fill") {
+                            Task { await model.stop() }
+                        }
+                        .disabled(!model.canStop)
+                        .accessibilityHint("Stops the current Tick and saves its recorded time.")
+                        .accessibilityIdentifier("ticks.stop")
                     }
                     .controlSize(.large)
-                    .disabled(!model.canStop)
-                    .accessibilityHint("Stops the current Tick and saves its recorded time.")
-                    .accessibilityIdentifier("ticks.stop")
                 }
                 .frame(maxWidth: .infinity)
                 .padding(18)

@@ -30,8 +30,27 @@ struct TicksViewModelTests {
         let model = TicksViewModel(store: store, defaults: defaults)
         await model.refresh()
         #expect(model.canStop)
+        #expect(model.canPause)
+        #expect(!model.canResume)
         #expect(!model.canStart)
         #expect(model.syncStatus == "Saved locally—waiting for iCloud")
+    }
+
+    @Test func pausedSessionCanResumeOrStopButCannotPauseAgain() async throws {
+        var fixture = makeState()
+        try TickTimerMutation.start(in: &fixture.snapshot, projectID: fixture.snapshot.projects[0].id, at: .now)
+        fixture.snapshot.sessions[0].pausedAt = .now
+        let suite = "TicksViewModelTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = TicksViewModel(store: ViewModelTestStore(state: fixture), defaults: defaults)
+
+        await model.refresh()
+
+        #expect(model.canResume)
+        #expect(model.canStop)
+        #expect(!model.canPause)
+        #expect(!model.canStart)
     }
 
     @Test func unavailableSavedSelectionFallsBackToAnExistingSpace() async throws {
@@ -66,5 +85,7 @@ private actor ViewModelTestStore: TicksStoring {
         return state
     }
     func start(projectID: UUID, at date: Date) throws -> TicksState { try refresh() }
+    func pause(sessionID: UUID, at date: Date) throws -> TicksState { try refresh() }
+    func resume(sessionID: UUID, at date: Date) throws -> TicksState { try refresh() }
     func stop(sessionID: UUID, at date: Date) throws -> TicksState { try refresh() }
 }

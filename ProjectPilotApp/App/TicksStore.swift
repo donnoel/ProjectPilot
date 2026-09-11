@@ -18,6 +18,8 @@ nonisolated protocol TicksStoring: Sendable {
     func load() async throws -> TicksState
     func refresh() async throws -> TicksState
     func start(projectID: UUID, at date: Date) async throws -> TicksState
+    func pause(sessionID: UUID, at date: Date) async throws -> TicksState
+    func resume(sessionID: UUID, at date: Date) async throws -> TicksState
     func stop(sessionID: UUID, at date: Date) async throws -> TicksState
 }
 
@@ -69,6 +71,24 @@ actor TicksStore: TicksStoring {
         var state = try load()
         guard state.canRecord else { throw Failure.needsFirstSync }
         try TickTimerMutation.start(in: &state.snapshot, projectID: projectID, at: date)
+        try save(state)
+        return try await refresh()
+    }
+
+    func pause(sessionID: UUID, at date: Date) async throws -> TicksState {
+        try await refreshBeforeAction()
+        var state = try load()
+        guard state.canRecord else { throw Failure.needsFirstSync }
+        try TickTimerMutation.pause(in: &state.snapshot, sessionID: sessionID, at: date)
+        try save(state)
+        return try await refresh()
+    }
+
+    func resume(sessionID: UUID, at date: Date) async throws -> TicksState {
+        try await refreshBeforeAction()
+        var state = try load()
+        guard state.canRecord else { throw Failure.needsFirstSync }
+        try TickTimerMutation.resume(in: &state.snapshot, sessionID: sessionID, at: date)
         try save(state)
         return try await refresh()
     }
