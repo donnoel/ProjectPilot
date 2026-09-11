@@ -76,10 +76,14 @@ struct TicksView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("ticks.syncStatus")
                 Spacer()
-                Button("Refresh", systemImage: "arrow.clockwise") {
+                Button {
                     Task { await model.refresh() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
                 }
                 .controlSize(.small)
+                .accessibilityLabel("Refresh Ticks")
+                .help("Refresh Ticks")
                 .disabled(model.isBusy)
             }
             if let message = model.errorMessage {

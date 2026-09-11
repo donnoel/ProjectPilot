@@ -175,9 +175,11 @@ struct ProjectPilotPopover: View {
                     Button {
                         vm.refreshCodexQuota()
                     } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
                     }
                     .controlSize(.small)
+                    .accessibilityLabel("Refresh Codex quota")
+                    .help("Refresh Codex quota")
                 }
 
                 codexUsageCard(
@@ -227,9 +229,11 @@ struct ProjectPilotPopover: View {
                     Button {
                         vm.refreshGitHubRepos()
                     } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
                     }
                     .controlSize(.small)
+                    .accessibilityLabel("Refresh repositories")
+                    .help("Refresh repositories")
                     .disabled(vm.isRefreshingGitHubRepos)
                 }
 
@@ -453,9 +457,11 @@ struct ProjectPilotPopover: View {
                     Button {
                         vm.refreshSystemHealth()
                     } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
                     }
                     .controlSize(.small)
+                    .accessibilityLabel("Refresh system health")
+                    .help("Refresh system health")
                     .disabled(vm.isRefreshingSystemHealth)
                 }
 
