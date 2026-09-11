@@ -3,12 +3,12 @@
 # ProjectPilot (macOS) Project Guide for Agents
 
 ## Product intent
-**ProjectPilot** is a macOS menu bar companion for Ticks, Codex usage, GitHub repositories, and development backups.
+**ProjectPilot** is a macOS menu bar companion for Ticks, Codex usage, GitHub repositories, development backups, and focused system health warnings.
 Core values: **consistency, reliability, local-first defaults, calm UX**.
 
 ## Current product phase
 
-The active tabs are **Ticks, Codex, GitHub, Backup**. The selected tab is persisted;
+The active tabs are **Ticks, Codex, GitHub, Backup, System Health**. The selected tab is persisted;
 Ticks is the initial default. Basic/Advanced, Create, pipeline progress and scaffold
 keyboard shortcuts are removed from the UI. The legacy scaffold engine remains
 internally and its invariants below still apply when touching that code.

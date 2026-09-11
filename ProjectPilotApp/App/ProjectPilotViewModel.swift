@@ -183,12 +183,13 @@ final class ProjectPilotViewModel: ObservableObject {
     @Published private(set) var codexQuotaLastUpdatedAt: Date? = nil
     @Published private(set) var codexQuotaError: String? = nil
 
-    struct GitHubRepo: Identifiable, Equatable {
+    nonisolated struct GitHubRepo: Identifiable, Equatable, Sendable {
         let nameWithOwner: String
         let url: String
         let isPrivate: Bool
         let createdAt: Date?
         let updatedAt: Date?
+        let defaultBranchName: String?
 
         var id: String { nameWithOwner }
     }
@@ -198,8 +199,8 @@ final class ProjectPilotViewModel: ObservableObject {
     @Published private(set) var githubReposError: String? = nil
     @Published private(set) var isRefreshingGitHubRepos: Bool = false
 
-    nonisolated struct RepoSyncStatus: Equatable {
-        enum State: Equatable {
+    nonisolated struct RepoSyncStatus: Equatable, Sendable {
+        enum State: Equatable, Sendable {
             case notLocal
             case checking
             case inSync
@@ -217,8 +218,36 @@ final class ProjectPilotViewModel: ObservableObject {
 
     @Published private(set) var githubRepoSyncStatus: [String: RepoSyncStatus] = [:]
 
-    nonisolated struct DevelopmentBackupStatus: Equatable {
-        enum State: Equatable {
+    nonisolated struct GitHubWorkflowRun: Equatable, Sendable {
+        let headSHA: String
+        let status: String
+        let conclusion: String?
+        let url: String?
+        let createdAt: Date?
+    }
+
+    nonisolated struct RepoCIStatus: Equatable, Sendable {
+        enum State: Equatable, Sendable {
+            case checking
+            case passing
+            case running
+            case failed
+            case noCIConfigured
+            case noRunForCurrentCommit
+            case unavailable(String)
+        }
+
+        let state: State
+        let defaultBranchName: String?
+        let commitSHA: String?
+        let runURL: String?
+        let checkedAt: Date
+    }
+
+    @Published private(set) var githubRepoCIStatus: [String: RepoCIStatus] = [:]
+
+    nonisolated struct DevelopmentBackupStatus: Equatable, Sendable {
+        enum State: Equatable, Sendable {
             case notChecked
             case checking
             case syncing
@@ -255,6 +284,8 @@ final class ProjectPilotViewModel: ObservableObject {
         checkedAt: nil
     )
     @Published private(set) var isSyncingDevelopmentBackup: Bool = false
+    @Published private(set) var systemHealthSnapshot: SystemHealthSnapshot? = nil
+    @Published private(set) var isRefreshingSystemHealth: Bool = false
 
     private let codexQuotaReader: CodexQuotaReader
     private var codexQuotaPollingTask: Task<Void, Never>? = nil
@@ -263,6 +294,15 @@ final class ProjectPilotViewModel: ObservableObject {
 
     var canRetryGitHub: Bool {
         pendingGitHubRetryName != nil && pendingGitHubRetryPath != nil
+    }
+
+    var githubReposForDisplay: [GitHubRepo] {
+        githubRepos.sorted { lhs, rhs in
+            let lhsPriority = githubRepoActionPriority(lhs)
+            let rhsPriority = githubRepoActionPriority(rhs)
+            if lhsPriority != rhsPriority { return lhsPriority < rhsPriority }
+            return lhs.nameWithOwner.localizedCaseInsensitiveCompare(rhs.nameWithOwner) == .orderedAscending
+        }
     }
 
     var pipelineProgressItems: [PipelineProgressItem] {
@@ -423,6 +463,15 @@ final class ProjectPilotViewModel: ObservableObject {
 
     func backUpDevelopmentNow() {
         Task { await syncDevelopmentBackupAsync(force: true) }
+    }
+
+    func refreshSystemHealth() {
+        Task { await refreshSystemHealthAsync() }
+    }
+
+    func ensureSystemHealthLoaded() {
+        guard systemHealthSnapshot == nil else { return }
+        refreshSystemHealth()
     }
 
     func setGitHubRepoVisibility(_ repo: GitHubRepo, isPrivate: Bool) {
@@ -774,6 +823,46 @@ final class ProjectPilotViewModel: ObservableObject {
         )
     }
 
+    // MARK: - System Health
+
+    private func refreshSystemHealthAsync() async {
+        guard !isRefreshingSystemHealth else { return }
+        isRefreshingSystemHealth = true
+        defer { isRefreshingSystemHealth = false }
+
+        let backupStatus = developmentBackupStatus
+        systemHealthSnapshot = await Task.detached(priority: .utility) {
+            SystemHealthChecker.check(backupStatus: backupStatus)
+        }.value
+    }
+
+    private func githubRepoActionPriority(_ repo: GitHubRepo) -> Int {
+        let ciPriority: Int
+        switch githubRepoCIStatus[repo.id]?.state {
+        case .failed:
+            ciPriority = 0
+        case .noRunForCurrentCommit, .unavailable:
+            ciPriority = 1
+        case .running, .checking:
+            ciPriority = 2
+        case .passing, .noCIConfigured, nil:
+            ciPriority = 3
+        }
+
+        let syncPriority: Int
+        switch githubRepoSyncStatus[repo.id]?.state {
+        case .error, .diverged:
+            syncPriority = 0
+        case .localChanges, .ahead, .behind:
+            syncPriority = 1
+        case .checking:
+            syncPriority = 2
+        case .inSync, .notLocal, nil:
+            syncPriority = 3
+        }
+        return min(ciPriority, syncPriority)
+    }
+
     // MARK: - GitHub Repos
 
     private func refreshGitHubReposAsync() async {
@@ -795,7 +884,7 @@ final class ProjectPilotViewModel: ObservableObject {
                     gh + [
                         "repo", "list",
                         "--limit", "200",
-                        "--json", "nameWithOwner,url,isPrivate,createdAt,updatedAt"
+                        "--json", "nameWithOwner,url,isPrivate,createdAt,updatedAt,defaultBranchRef"
                     ]
                 )
 
@@ -806,11 +895,26 @@ final class ProjectPilotViewModel: ObservableObject {
             }.value
 
             githubRepos = repos
-            githubReposLastUpdatedAt = Date()
+            let checkedAt = Date()
             githubRepoSyncStatus = repos.reduce(into: [:]) { dict, repo in
-                dict[repo.id] = RepoSyncStatus(state: .checking, localPath: nil, checkedAt: Date())
+                dict[repo.id] = RepoSyncStatus(state: .checking, localPath: nil, checkedAt: checkedAt)
             }
-            Task { await refreshGitHubRepoSyncStatusAsync(for: repos) }
+            githubRepoCIStatus = repos.reduce(into: [:]) { dict, repo in
+                dict[repo.id] = RepoCIStatus(
+                    state: .checking,
+                    defaultBranchName: repo.defaultBranchName,
+                    commitSHA: nil,
+                    runURL: nil,
+                    checkedAt: checkedAt
+                )
+            }
+
+            let rootURL = projectRootURL.standardizedFileURL
+            async let syncStatuses = Self.loadGitHubRepoSyncStatuses(for: repos, projectRootURL: rootURL)
+            async let ciStatuses = Self.loadGitHubRepoCIStatuses(for: repos)
+            githubRepoSyncStatus = await syncStatuses
+            githubRepoCIStatus = await ciStatuses
+            githubReposLastUpdatedAt = Date()
             setStatus(.success, "Loaded \(repos.count) GitHub repos.")
         } catch {
             githubReposError = error.localizedDescription
@@ -818,14 +922,157 @@ final class ProjectPilotViewModel: ObservableObject {
         }
     }
 
-    private func refreshGitHubRepoSyncStatusAsync(for repos: [GitHubRepo]) async {
-        let rootURL = projectRootURL.standardizedFileURL
-        let results = await Task.detached(priority: .utility) {
+    private nonisolated static func loadGitHubRepoSyncStatuses(
+        for repos: [GitHubRepo],
+        projectRootURL: URL
+    ) async -> [String: RepoSyncStatus] {
+        await Task.detached(priority: .utility) {
             repos.reduce(into: [String: RepoSyncStatus]()) { dict, repo in
-                dict[repo.nameWithOwner] = Self.computeSyncStatusStatic(repo: repo, projectRootURL: rootURL)
+                dict[repo.nameWithOwner] = Self.computeSyncStatusStatic(repo: repo, projectRootURL: projectRootURL)
             }
         }.value
-        githubRepoSyncStatus = results
+    }
+
+    private nonisolated static func loadGitHubRepoCIStatuses(for repos: [GitHubRepo]) async -> [String: RepoCIStatus] {
+        await withTaskGroup(of: (String, RepoCIStatus).self, returning: [String: RepoCIStatus].self) { group in
+            var iterator = repos.makeIterator()
+            var activeTasks = 0
+            let concurrencyLimit = 6
+
+            while activeTasks < concurrencyLimit, let repo = iterator.next() {
+                activeTasks += 1
+                group.addTask(priority: .utility) {
+                    (repo.id, fetchGitHubCIStatus(repo: repo))
+                }
+            }
+
+            var results: [String: RepoCIStatus] = [:]
+            while let (repoID, status) = await group.next() {
+                results[repoID] = status
+                if let repo = iterator.next() {
+                    group.addTask(priority: .utility) {
+                        (repo.id, fetchGitHubCIStatus(repo: repo))
+                    }
+                }
+            }
+            return results
+        }
+    }
+
+    private nonisolated static func fetchGitHubCIStatus(repo: GitHubRepo) -> RepoCIStatus {
+        let checkedAt = Date()
+        guard let branch = repo.defaultBranchName, !branch.isEmpty else {
+            return RepoCIStatus(
+                state: .unavailable("The repository has no default branch."),
+                defaultBranchName: nil,
+                commitSHA: nil,
+                runURL: nil,
+                checkedAt: checkedAt
+            )
+        }
+
+        do {
+            let gh = resolvedGHCommandPrefixStatic()
+            let commitSHA = try runProcess(gh + [
+                "api", "--method", "GET",
+                "repos/\(repo.nameWithOwner)/commits",
+                "-f", "sha=\(branch)",
+                "-f", "per_page=1",
+                "--jq", ".[0].sha"
+            ]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !commitSHA.isEmpty else {
+                throw PPCLIError(message: "GitHub did not return the current \(branch) commit.")
+            }
+
+            let workflowCountText = try runProcess(gh + [
+                "api", "--method", "GET",
+                "repos/\(repo.nameWithOwner)/actions/workflows",
+                "-f", "per_page=1",
+                "--jq", ".total_count"
+            ]).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let workflowCount = Int(workflowCountText) else {
+                throw PPCLIError(message: "GitHub returned an unreadable workflow count.")
+            }
+            guard workflowCount > 0 else {
+                return RepoCIStatus(
+                    state: .noCIConfigured,
+                    defaultBranchName: branch,
+                    commitSHA: commitSHA,
+                    runURL: nil,
+                    checkedAt: checkedAt
+                )
+            }
+
+            let runsJSON = try runProcess(gh + [
+                "run", "list",
+                "--repo", repo.nameWithOwner,
+                "--commit", commitSHA,
+                "--limit", "100",
+                "--json", "headSha,status,conclusion,url,createdAt"
+            ])
+            let runs = try parseGitHubWorkflowRuns(fromJSON: runsJSON)
+            let interpretation = interpretCIStatus(
+                currentCommitSHA: commitSHA,
+                hasConfiguredWorkflows: true,
+                runs: runs
+            )
+            return RepoCIStatus(
+                state: interpretation.state,
+                defaultBranchName: branch,
+                commitSHA: commitSHA,
+                runURL: interpretation.runURL,
+                checkedAt: checkedAt
+            )
+        } catch {
+            return RepoCIStatus(
+                state: .unavailable(error.localizedDescription),
+                defaultBranchName: branch,
+                commitSHA: nil,
+                runURL: nil,
+                checkedAt: checkedAt
+            )
+        }
+    }
+
+    nonisolated static func interpretCIStatus(
+        currentCommitSHA: String,
+        hasConfiguredWorkflows: Bool,
+        runs: [GitHubWorkflowRun]
+    ) -> (state: RepoCIStatus.State, runURL: String?) {
+        guard hasConfiguredWorkflows else { return (.noCIConfigured, nil) }
+        let matchingRuns = runs
+            .filter { $0.headSHA == currentCommitSHA }
+            .sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
+        guard !matchingRuns.isEmpty else { return (.noRunForCurrentCommit, nil) }
+
+        if let run = matchingRuns.first(where: { $0.status.lowercased() != "completed" }) {
+            return (.running, run.url)
+        }
+        if let run = matchingRuns.first(where: { $0.conclusion?.lowercased() != "success" }) {
+            return (.failed, run.url)
+        }
+        return (.passing, matchingRuns.first?.url)
+    }
+
+    nonisolated static func parseGitHubWorkflowRuns(fromJSON json: String) throws -> [GitHubWorkflowRun] {
+        guard let data = json.data(using: .utf8),
+              let objects = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw PPCLIError(message: "Unable to decode GitHub workflow runs.")
+        }
+        return try objects.map { object in
+            guard let headSHA = object["headSha"] as? String,
+                  let status = object["status"] as? String else {
+                throw PPCLIError(message: "A GitHub workflow run is missing its commit or status.")
+            }
+            let createdAt = (object["createdAt"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+            return GitHubWorkflowRun(
+                headSHA: headSHA,
+                status: status,
+                conclusion: object["conclusion"] as? String,
+                url: object["url"] as? String,
+                createdAt: createdAt
+            )
+        }
     }
 
     private nonisolated static func resolveLocalRepoURLStatic(repo: GitHubRepo, projectRootURL: URL) -> URL {
@@ -1142,7 +1389,7 @@ final class ProjectPilotViewModel: ObservableObject {
 
                 let out = try Self.runProcess(gh + [
                     "repo", "view", repo.nameWithOwner,
-                    "--json", "nameWithOwner,url,isPrivate,createdAt,updatedAt"
+                    "--json", "nameWithOwner,url,isPrivate,createdAt,updatedAt,defaultBranchRef"
                 ])
                 return try Self.parseGitHubRepo(fromJSON: out)
             }.value
@@ -1203,12 +1450,15 @@ final class ProjectPilotViewModel: ObservableObject {
             updatedAt = nil
         }
 
+        let defaultBranchName = (object["defaultBranchRef"] as? [String: Any])?["name"] as? String
+
         return GitHubRepo(
             nameWithOwner: nameWithOwner,
             url: url,
             isPrivate: isPrivate,
             createdAt: createdAt,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            defaultBranchName: defaultBranchName
         )
     }
 

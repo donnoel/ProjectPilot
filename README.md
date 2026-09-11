@@ -1,15 +1,17 @@
 # ProjectPilot
 
 ProjectPilot is a native macOS menu bar companion for Ticks, Codex usage,
-GitHub repositories, and development backups.
+GitHub repositories, development backups, and focused system health warnings.
 
 ## Tabs
 
 - **Ticks** — choose an existing Space, see the active or paused Tick, and
   Start/Stop recording. Create and manage Spaces in Ticks on iPhone or iPad.
 - **Codex** — inspect usage limits and credits from local Codex session data.
-- **GitHub** — browse repositories and their created/updated timestamps.
+- **GitHub** — browse repositories with separate local Git sync and current-default-branch CI status.
 - **Backup** — check and update the development-folder mirror in iCloud Drive.
+- **System Health** — see only actionable disk, developer-storage, Docker,
+  backup, and required-tool warnings, or a calm All clear state.
 
 Ticks is the initial tab. Your selected tab is remembered across launches.
 Basic and Advanced, their Create button, and scaffold shortcuts have been

@@ -7,7 +7,7 @@ struct ProjectPilotPopover: View {
 
     @ObservedObject var ticks: TicksViewModel
     @AppStorage("projectPilot.selectedTab") private var storedMode = Mode.ticks.rawValue
-    private var mode: Mode { Mode(rawValue: storedMode) ?? .ticks }
+    private var mode: Mode { Mode.persistedValue(for: storedMode) }
     @State private var confirmingVisibilityRepo: ProjectPilotViewModel.GitHubRepo? = nil
 
     enum Mode: String, CaseIterable, Identifiable {
@@ -15,8 +15,13 @@ struct ProjectPilotPopover: View {
         case codex = "Codex"
         case github = "GitHub"
         case backup = "Backup"
+        case systemHealth = "System Health"
 
         var id: String { rawValue }
+
+        static func persistedValue(for rawValue: String) -> Mode {
+            Mode(rawValue: rawValue) ?? .ticks
+        }
     }
 
     var body: some View {
@@ -36,6 +41,8 @@ struct ProjectPilotPopover: View {
                     githubSections
                 case .backup:
                     backupSections
+                case .systemHealth:
+                    systemHealthSections
                 }
 
                 Divider().opacity(0.35)
@@ -60,6 +67,8 @@ struct ProjectPilotPopover: View {
             vm.ensureGitHubReposLoaded()
         } else if mode == .backup {
             vm.ensureDevelopmentBackupIsCurrent()
+        } else if mode == .systemHealth {
+            vm.ensureSystemHealthLoaded()
         }
     }
 
@@ -241,7 +250,7 @@ struct ProjectPilotPopover: View {
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 10) {
-                            ForEach(vm.githubRepos) { repo in
+                            ForEach(vm.githubReposForDisplay) { repo in
                                 githubRepoRow(repo)
                             }
                         }
@@ -275,8 +284,6 @@ struct ProjectPilotPopover: View {
                                     .fill(.white.opacity(0.10))
                             )
 
-                        syncStatusBadge(for: repo)
-
                         if let createdAt = repo.createdAt {
                             Text("Created \(createdAt.formatted(date: .abbreviated, time: .omitted))")
                                 .font(.caption2)
@@ -304,6 +311,24 @@ struct ProjectPilotPopover: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Open in browser")
+            }
+
+            HStack(spacing: 8) {
+                Text("Local")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, alignment: .leading)
+                syncStatusBadge(for: repo)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Text("CI")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 34, alignment: .leading)
+                ciStatusBadge(for: repo)
+                Spacer(minLength: 0)
             }
 
             if confirmingVisibilityRepo?.id == repo.id {
@@ -403,6 +428,100 @@ struct ProjectPilotPopover: View {
         .onAppear {
             vm.ensureDevelopmentBackupIsCurrent()
         }
+    }
+
+    private var systemHealthSections: some View {
+        section("System Health") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(systemHealthTitle)
+                            .font(.subheadline.weight(.semibold))
+                        if let checkedAt = vm.systemHealthSnapshot?.checkedAt {
+                            Text("Checked \(checkedAt.formatted(date: .omitted, time: .shortened))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Checks run only when requested or when this tab first opens.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        vm.refreshSystemHealth()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .controlSize(.small)
+                    .disabled(vm.isRefreshingSystemHealth)
+                }
+
+                if vm.isRefreshingSystemHealth, vm.systemHealthSnapshot == nil {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
+                } else if let snapshot = vm.systemHealthSnapshot, snapshot.warnings.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle")
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text("No actionable warnings.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                } else if let warnings = vm.systemHealthSnapshot?.warnings {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(warnings) { warning in
+                                systemHealthWarningRow(warning)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .frame(maxHeight: 300)
+                }
+            }
+        }
+        .onAppear {
+            vm.ensureSystemHealthLoaded()
+        }
+    }
+
+    private var systemHealthTitle: String {
+        guard let snapshot = vm.systemHealthSnapshot else { return "Checking system health" }
+        return snapshot.warnings.isEmpty ? "All clear" : "Action needed"
+    }
+
+    private func systemHealthWarningRow(_ warning: SystemHealthWarning) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: warning.severity == .critical ? "exclamationmark.triangle.fill" : "exclamationmark.circle.fill")
+                .foregroundStyle(warning.severity == .critical ? .red : .orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(warning.title)
+                    .font(.caption.weight(.semibold))
+                Text(warning.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .liquidGlassCard(cornerRadius: 12, tint: .white.opacity(0.04), shadowOpacity: 0.08)
+        .accessibilityElement(children: .combine)
     }
 
     private func pathRow(title: String, path: String) -> some View {
@@ -511,6 +630,96 @@ struct ProjectPilotPopover: View {
             return "exclamationmark.triangle.fill"
         case .notChecked, .checking, .syncing, .outOfSync, .checkTimedOut, .backupMissing:
             return "circle.fill"
+        }
+    }
+
+    private func ciStatusBadge(for repo: ProjectPilotViewModel.GitHubRepo) -> some View {
+        guard let status = vm.githubRepoCIStatus[repo.id] else { return AnyView(EmptyView()) }
+
+        let title: String
+        switch status.state {
+        case .checking: title = "Checking"
+        case .passing: title = "Passing"
+        case .running: title = "Running"
+        case .failed: title = "Failed"
+        case .noCIConfigured: title = "No CI configured"
+        case .noRunForCurrentCommit: title = "No run for current commit"
+        case .unavailable: title = "Unavailable"
+        }
+
+        let revision: String
+        if let branch = status.defaultBranchName, let sha = status.commitSHA {
+            revision = " • \(branch) \(String(sha.prefix(7)))"
+        } else if let branch = status.defaultBranchName {
+            revision = " • \(branch)"
+        } else {
+            revision = ""
+        }
+        let text = title + revision
+        let badge = HStack(spacing: 5) {
+            Circle()
+                .fill(ciBadgeForegroundColor(for: status.state))
+                .frame(width: 5, height: 5)
+            Text(text)
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+            if status.runURL != nil {
+                Image(systemName: "arrow.up.right.square")
+                    .font(.caption2)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .foregroundStyle(ciBadgeForegroundColor(for: status.state))
+        .background(
+            Capsule(style: .continuous)
+                .fill(ciBadgeForegroundColor(for: status.state).opacity(0.12))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(ciBadgeForegroundColor(for: status.state).opacity(0.30), lineWidth: 0.5)
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("CI: \(text)")
+        .help(ciHelpText(for: status))
+
+        if let runURL = status.runURL, let url = URL(string: runURL) {
+            return AnyView(Link(destination: url) { badge }.buttonStyle(.plain))
+        }
+        return AnyView(badge)
+    }
+
+    private func ciBadgeForegroundColor(for state: ProjectPilotViewModel.RepoCIStatus.State) -> Color {
+        switch state {
+        case .passing:
+            return .green
+        case .running, .checking:
+            return .blue
+        case .failed:
+            return .red
+        case .noRunForCurrentCommit, .unavailable:
+            return .orange
+        case .noCIConfigured:
+            return .secondary
+        }
+    }
+
+    private func ciHelpText(for status: ProjectPilotViewModel.RepoCIStatus) -> String {
+        switch status.state {
+        case .checking:
+            return "Checking the current default-branch commit and its workflow runs."
+        case .passing:
+            return "All matching workflow runs completed successfully. Open the run."
+        case .running:
+            return "A workflow run for the current commit is still running. Open the run."
+        case .failed:
+            return "A workflow run for the current commit did not succeed. Open the run."
+        case .noCIConfigured:
+            return "This repository has no GitHub Actions workflows configured."
+        case .noRunForCurrentCommit:
+            return "Workflows exist, but none ran for the current default-branch commit."
+        case .unavailable(let message):
+            return "CI status unavailable: \(message)"
         }
     }
 
