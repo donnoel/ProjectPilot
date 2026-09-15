@@ -102,6 +102,10 @@ struct ProjectPilotPopover: View {
             }
         }
         .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel("Project Pilot section")
     }
 
     private var progressTimeline: some View {
