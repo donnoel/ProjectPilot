@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: donnoel/Tick
-          ref: 36abf9721a38829380cc655fef0bfc7280af51a3
+          ref: d7f069776152b0dca33b14a8d6f60470419a9f74
           path: Tick
 
       - name: Select Xcode
