@@ -1,6 +1,6 @@
 title: Project Pilot
-description: A macOS menu-bar app for generating known-good Xcode projects.
-tagline: Consistent Xcode projects, from first folder to first push.
+description: A macOS menu-bar companion for Ticks, Codex usage, GitHub CI, backups, and system health.
+tagline: Time, code, backups, and health. One calm place in your menu bar.
 project_label: Don Noel / Projects
 status_label: macOS utility
 github_url: https://github.com/donnoel/ProjectPilot
