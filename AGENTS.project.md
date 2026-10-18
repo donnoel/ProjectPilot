@@ -8,6 +8,8 @@ Core values: **consistency, reliability, local-first defaults, calm UX**.
 
 ## Current product phase
 
+Don confirmed on October 18, 2026 that the current ProjectPilot work is complete with no outstanding closeout tasks, including prior acceptance and delete-confirmation follow-ups. This is owner confirmation, not a new test run, independently observed device acceptance, or a release claim. Treat new requests or reported regressions as follow-up work.
+
 The active tabs are **Ticks, Codex, GitHub, Backup, System Health**. The selected tab is persisted;
 Ticks is the initial default. Basic/Advanced, Create, pipeline progress and scaffold
 keyboard shortcuts are removed from the UI. The legacy scaffold engine remains
@@ -30,7 +32,8 @@ archiving, manual time, voice memos and Auto Tick configuration stay in Tick.
   removed. Automated Ticks coverage is in the unit tests and shared TickCore tests.
 - Live cloud access requires the ProjectPilot provisioning profile; local fixture
   tests do not prove physical-device sync. The previous Tick widget propagation
-  checkpoint remains unverified until tested on devices.
+  checkpoint is historical; the current follow-up is closed by Don's October 18 confirmation,
+  without claiming new independent device verification.
 
 ## Concurrency rules (important)
 We are using Swift 6-era concurrency checks. Do NOT silence them with broad isolation.
@@ -70,10 +73,11 @@ Additional expectations:
 - Maintain **clean build**: no warnings.
 - If new files are added, ensure they are included in the correct target when required.
 
-## Near-term priorities
-- Expand automated tests around preset application and generated destination correctness.
-- Improve pbxproj update robustness for future template variations.
-- Continue polishing failure diagnostics and recovery UX.
+## Current closeout
+
+- No outstanding work as confirmed by Don on October 18, 2026.
+- The legacy scaffold engine is retained internally, not the current product purpose or an active work queue.
+- Additional diagnostics, coverage, or feature work requires a new request.
 
 ## Output expectations per patch
 Provide:

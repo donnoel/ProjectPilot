@@ -1,7 +1,11 @@
 # ProjectPilot
 
 ProjectPilot is a native macOS menu bar companion for Ticks, Codex usage,
-GitHub repositories, development backups, and focused system health warnings.
+GitHub repositories and CI, development backups, and focused system health warnings.
+
+## Current status — October 18, 2026
+
+Don confirmed the current ProjectPilot work is complete, with nothing outstanding from his perspective. Prior acceptance and delete-confirmation follow-ups are closed on owner confirmation. This records current scope completion without claiming new tests, independently observed cross-device acceptance, or a release. New requests and reported regressions are follow-up work.
 
 ## Tabs
 
@@ -33,8 +37,9 @@ verified on September 7, 2026.
 The Mac keeps an atomic local cache and retries pending changes. It shows when
 an action is saved locally and waiting for iCloud. “Last checked” confirms the
 Mac's server check; it does not claim that a receiving phone or widget has
-already refreshed. Tick's existing physical widget Stop-propagation issue remains
-an explicit validation checkpoint.
+already refreshed. The earlier physical widget Stop-propagation checkpoint is
+historical; Don's October 18 confirmation closes the current follow-up without
+adding independent device verification.
 
 See [Ticks integration](docs/TICKS_INTEGRATION.md) for signing, storage, account
 isolation, conflict behavior, tests, and the three-device delivery checks.

@@ -5,6 +5,10 @@ Spaces and starts/stops one timer. Create/edit/archive Spaces in the mobile app.
 Codex, GitHub and Backup remain available. The scaffold engine and its tests are
 retained internally; its Basic/Advanced tabs, Create button and shortcuts are gone.
 
+## Current closeout — October 18, 2026
+
+Don confirms Tick and ProjectPilot's current work is complete, with no outstanding acceptance or delete-confirmation follow-ups. The September verification sections below remain historical receipts, including the limits of independent device testing. Owner confirmation supersedes those items as the current task queue; it does not add new test results, live round trips, or a release claim.
+
 ## Shared implementation
 
 Keep the `ProjectPilot` and `Tick` checkouts as siblings. `../Tick/Package.swift`
@@ -50,8 +54,8 @@ The Codex Run action uses this script. `--verify`, `--debug`, `--logs` and
 
 The user authorized provisioning on September 7, 2026. Xcode created the
 `dn.ProjectPilot` Mac development profile, and the signed app connected to the
-existing container. Physical cross-device action propagation remains a separate
-check; signing and reading cloud data alone do not prove that round trip.
+existing container. Signing and reading cloud data alone do not prove a physical cross-device
+action round trip. The current follow-up is closed by the owner confirmation above.
 
 ## Behavior and recovery
 
@@ -69,9 +73,9 @@ check; signing and reading cloud data alone do not prove that round trip.
   (30 seconds while visible or with pending uploads; five minutes otherwise).
 - “Last checked” refers to this Mac's cloud acknowledgment, not an acknowledgment
   from the iPhone/iPad. A receiving widget can update later under WidgetKit's
-  background scheduling. The existing Tick checkpoint `4e84aa9` reports unresolved
-  physical cross-device widget Stop propagation; this integration does not claim
-  that historical issue is fixed by unit tests.
+  background scheduling. The historical Tick checkpoint `4e84aa9` reported unresolved
+  physical cross-device widget Stop propagation. The current follow-up is owner-closed;
+  unit tests are still not independent evidence of a physical-device fix.
 
 ## Validation
 
@@ -83,13 +87,13 @@ Run shared tests with `swift test --package-path ../Tick -Xswiftc -warnings-as-e
 ProjectPilot unit tests cover three simulated clients, pause/resume, retry after relaunch,
 optimistic conflicts, account isolation, corrupt/missing records and stale Stop.
 The temporary debug UI-test window was removed to restore the original menu-bar
-scene. Ticks Start/Pause/Resume/Stop and tab restoration require manual UI verification;
+scene. For future release rechecks, verify Ticks Start/Pause/Resume/Stop and tab restoration manually;
 the original UI-test template does not cover those flows.
 
-Before delivery, verify a signed Mac start → iPhone stop, iPad start → Mac stop,
+For a future delivery or reported regression, verify a signed Mac start → iPhone stop, iPad start → Mac stop,
 relaunch/offline recovery, and receiving widgets on the physical devices. Check
 VoiceOver reading order and appearance with the user's accessibility settings.
-No live timer or cloud records are created by the automated tests.
+These are reference procedures, not outstanding current closeout tasks. No live timer or cloud records are created by the automated tests.
 
 ## Implementation verification — 2026-09-07
 
