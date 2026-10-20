@@ -9,7 +9,7 @@
 
 ---
 
-## ✨ Overview
+## 🧭 Overview
 
 ProjectPilot is a native macOS menu bar companion for Ticks, Codex usage,
 GitHub repositories and CI, development backups, and focused system health warnings.
