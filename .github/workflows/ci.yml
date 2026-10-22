@@ -3,16 +3,32 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.mdx'
+      - 'LICENSE'
+      - 'LICENSE.*'
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     runs-on: macos-26
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: ProjectPilot
     env:
+      TZ: UTC
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
       DERIVED_DATA: ${{ github.workspace }}/DerivedData
       RESULT_BUNDLE: ${{ github.workspace }}/TestResults/ProjectPilot.xcresult
     steps:
@@ -31,17 +47,16 @@ jobs:
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: '26.6'
 
       - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
           path: |
             ~/Library/Caches/org.swift.swiftpm
-            ~/Library/Developer/Xcode/DerivedData/ModuleCache.noindex
-          key: spm-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          key: spm-${{ runner.os }}-${{ runner.arch }}-xcode-26.6-${{ hashFiles('**/Package.resolved') }}
           restore-keys: |
-            spm-${{ runner.os }}-
+            spm-${{ runner.os }}-${{ runner.arch }}-xcode-26.6-
 
       - name: Resolve packages
         run: xcodebuild -resolvePackageDependencies -project ProjectPilot.xcodeproj
@@ -52,26 +67,14 @@ jobs:
           xcodebuild -version
           xcodebuild -project ProjectPilot.xcodeproj -scheme ProjectPilot -showdestinations
 
-      - name: Build and test
-        run: |
-          set -euo pipefail
-          mkdir -p "$(dirname "$RESULT_BUNDLE")"
-          rm -rf "$RESULT_BUNDLE"
-          xcodebuild \
-            -project ProjectPilot.xcodeproj \
-            -scheme ProjectPilot \
-            -configuration Debug \
-            -destination 'platform=macOS,arch=arm64' \
-            -derivedDataPath "$DERIVED_DATA" \
-            -resultBundlePath "$RESULT_BUNDLE" \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM= \
-            CODE_SIGN_ENTITLEMENTS= \
-            SWIFT_SUPPRESS_WARNINGS=NO \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
-            GCC_TREAT_WARNINGS_AS_ERRORS=YES \
-            clean test
+      - name: Build for testing
+        run: bash scripts/ci.sh build
+
+      - name: Unit tests
+        run: bash scripts/ci.sh unit
+
+      - name: UI tests
+        run: bash scripts/ci.sh ui
 
       - name: Upload xcodebuild artifacts
         if: failure()
@@ -80,4 +83,5 @@ jobs:
           name: xcodebuild-artifacts
           path: |
             ${{ env.RESULT_BUNDLE }}
+            TestResults/**/*.xcresult
             ${{ env.DERIVED_DATA }}/Logs/Test

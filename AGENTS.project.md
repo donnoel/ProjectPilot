@@ -85,3 +85,11 @@ Provide:
 - Files modified
 - Any migration considerations
 - Commit message suggestion
+
+## CI reliability and pre-push validation
+
+- GitHub uses Xcode 26.6 on macOS arm64. Select that compiler through `DEVELOPER_DIR`, then run `bash scripts/ci.sh all` for the same clean build and complete unit/UI suite locally. Toolchain mismatches fail explicitly; report checks with another compiler separately.
+- Keep the build, unit-test, and UI-test phases and all existing assertions. Before publishing CI, harness, or shared test-fixture changes, run the full relevant suite; focused/unit-only passes are partial evidence.
+- Use explicit calendars/timezones for date fixtures, deterministic verified text replacement and readiness conditions for UI, and isolated cloud/Keychain fixtures where those services are not being tested. Repair a failing assumption across related tests rather than retrying or disabling it.
+- Classify zero-step payment/spending-limit failures as unavailable execution evidence, separately from compilation, assertions, and deployment. Inspect annotations before editing code for an account block.
+- Documentation-only pushes skip expensive CI; pull-request checks remain present for required statuses. Superseded same-ref runs are cancelled. Change pinned compiler/runtime versions deliberately and validate the complete suite.
