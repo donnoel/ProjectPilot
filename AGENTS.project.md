@@ -86,10 +86,14 @@ Provide:
 - Any migration considerations
 - Commit message suggestion
 
-## CI reliability and pre-push validation
+## CI reliability and local validation
 
-- GitHub uses Xcode 26.6 on macOS arm64. Select that compiler through `DEVELOPER_DIR`, then run `bash scripts/ci.sh all` for the same clean build and complete unit/UI suite locally. Toolchain mismatches fail explicitly; report checks with another compiler separately.
-- Keep the build, unit-test, and UI-test phases and all existing assertions. Before publishing CI, harness, or shared test-fixture changes, run the full relevant suite; focused/unit-only passes are partial evidence.
+- For ordinary changes, start with the narrowest relevant build, unit test or UI check. Expand for shared behavior, persistence, startup or release risk. Documentation and local tool-selection helper changes need scoped structural/contract checks; they do not require an application rebuild solely to repeat CI.
+- Use `bash scripts/local-check.sh <command> [args...]` for local checks. It selects already-installed Xcode 26.6 for that command without changing global defaults, and preserves an explicit `DEVELOPER_DIR`. If unavailable, focused commands can use the existing compiler with the difference reported; the strict CI driver still rejects a mismatch.
+- GitHub keeps Xcode 26.6 on macOS arm64. For deliberate complete reproduction use `bash scripts/local-check.sh bash scripts/ci.sh all`. Fresh simulators are for isolated/full reproduction; preserve existing simulator data. Upgrade pinned baselines in a separate validated change.
+- Run the complete affected suites when changing build/test workflow behavior, test harnesses or shared fixtures, or when reproducing a hosted failure. Full local CI is not a blanket prerequisite for every edit. Keep GitHub CI enabled and all existing suites/assertions; a focused pass is not a full-suite pass.
+- Check installed tools and equivalent capabilities before proposing a download. Do not install or switch global tools merely to obtain exact CI parity for an unrelated change. Report local compiler/runtime/browser/OS differences and checks not run; only observed GitHub results establish hosted CI success.
+- Keep the build, unit-test, and UI-test phases and all existing assertions. Build/test workflow, harness and shared-fixture changes require complete affected-suite evidence.
 - Use explicit calendars/timezones for date fixtures, deterministic verified text replacement and readiness conditions for UI, and isolated cloud/Keychain fixtures where those services are not being tested. Repair a failing assumption across related tests rather than retrying or disabling it.
 - Classify zero-step payment/spending-limit failures as unavailable execution evidence, separately from compilation, assertions, and deployment. Inspect annotations before editing code for an account block.
-- Documentation-only pushes skip expensive CI; pull-request checks remain present for required statuses. Superseded same-ref runs are cancelled. Change pinned compiler/runtime versions deliberately and validate the complete suite.
+- Documentation-only pushes skip expensive CI; optional pull-request checks remain present. Superseded same-ref runs are cancelled. Change pinned compiler/runtime versions deliberately and validate the complete suite.
