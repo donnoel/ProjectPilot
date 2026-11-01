@@ -222,6 +222,7 @@ struct ProjectPilotTests {
         #expect(arguments.contains("--exclude=.DS_Store"))
         #expect(arguments.contains("--exclude=fsmonitor--daemon.ipc"))
         #expect(arguments.contains("--exclude=cdk.out/"))
+        #expect(arguments.contains("--exclude=/ProjectPilot/Build/"))
         #expect(!arguments.contains("--exclude=.git/"))
         #expect(arguments.suffix(2) == [sourceURL.path + "/", backupURL.path + "/"])
     }
@@ -263,10 +264,13 @@ struct ProjectPilotTests {
         let backupURL = rootURL.appendingPathComponent("backup", isDirectory: true)
         let sourceGitURL = sourceURL.appendingPathComponent(".git", isDirectory: true)
         let sourceBuildURL = sourceURL.appendingPathComponent("build", isDirectory: true)
+        let pilotBuildURL = sourceURL.appendingPathComponent("ProjectPilot/Build", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
         try FileManager.default.createDirectory(at: sourceGitURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: sourceBuildURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: pilotBuildURL, withIntermediateDirectories: true)
+        try "generated".write(to: pilotBuildURL.appendingPathComponent("App"), atomically: true, encoding: .utf8)
         try FileManager.default.createDirectory(at: backupURL, withIntermediateDirectories: true)
         try "golden".write(
             to: sourceURL.appendingPathComponent("Golden.txt"),
@@ -309,6 +313,7 @@ struct ProjectPilotTests {
         )
         #expect(!FileManager.default.fileExists(atPath: backupURL.appendingPathComponent("Stale.txt").path))
         #expect(!FileManager.default.fileExists(atPath: backupURL.appendingPathComponent("build").path))
+        #expect(!FileManager.default.fileExists(atPath: backupURL.appendingPathComponent("ProjectPilot/Build").path))
     }
 
     @Test func processRunnerHandlesOutputLargerThanPipeCapacity() throws {

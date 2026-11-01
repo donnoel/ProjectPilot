@@ -51,10 +51,12 @@ nonisolated final class DevelopmentBackupMonitor {
         var schedule = DevelopmentBackupSchedule(now: ProcessInfo.processInfo.systemUptime)
         let root: String
         let exclusions: [String]
+        let additionalRoots: [String]
 
-        init(root: String, exclusions: [String]) {
+        init(root: String, exclusions: [String], additionalRoots: [String]) {
             self.root = root
             self.exclusions = exclusions
+            self.additionalRoots = additionalRoots
         }
 
         func receive(paths: [String], flags: UnsafePointer<FSEventStreamEventFlags>) {
@@ -65,7 +67,10 @@ nonisolated final class DevelopmentBackupMonitor {
             )
             let relevant = paths.enumerated().contains { index, path in
                 flags[index] & recoveryFlags != 0 ||
-                    DevelopmentBackupMonitor.affectsBackup(path: path, root: root, exclusions: exclusions)
+                    DevelopmentBackupMonitor.affectsBackup(path: path, root: root, exclusions: exclusions) ||
+                    additionalRoots.contains {
+                        DevelopmentBackupMonitor.affectsBackup(path: path, root: $0, exclusions: [])
+                    }
             }
             if relevant {
                 lock.withLock { schedule.changed(at: ProcessInfo.processInfo.systemUptime) }
@@ -76,8 +81,11 @@ nonisolated final class DevelopmentBackupMonitor {
     private let state: State
     private let stream: FSEventStreamRef?
 
-    init(root: URL, exclusions: [String]) {
-        let state = State(root: root.standardizedFileURL.resolvingSymlinksInPath().path, exclusions: exclusions)
+    init(root: URL, exclusions: [String], additionalRoots: [URL] = []) {
+        let state = State(
+            root: root.standardizedFileURL.resolvingSymlinksInPath().path, exclusions: exclusions,
+            additionalRoots: additionalRoots.map { $0.standardizedFileURL.resolvingSymlinksInPath().path }
+        )
         self.state = state
         var context = FSEventStreamContext(
             version: 0,
@@ -99,7 +107,8 @@ nonisolated final class DevelopmentBackupMonitor {
                 guard paths.count == count else { return }
                 Unmanaged<State>.fromOpaque(info).takeUnretainedValue().receive(paths: paths, flags: flags)
             },
-            &context, [state.root] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 5,
+            &context, ([state.root] + state.additionalRoots) as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 5,
             FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes |
                 kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot)
         )
@@ -147,6 +156,13 @@ nonisolated final class DevelopmentBackupMonitor {
         guard path != root else { return true }
         guard path.hasPrefix(root + "/") else { return false }
         let components = path.dropFirst(root.count + 1).split(separator: "/").map(String.init)
+        if components.first == "skills" { return true }
+        let relative = components.joined(separator: "/")
+        if exclusions.contains(where: { pattern in
+            guard pattern.hasPrefix("/") else { return false }
+            let directory = pattern.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return relative == directory || relative.hasPrefix(directory + "/")
+        }) { return false }
         return !components.contains { component in
             exclusions.contains { pattern in
                 let name = pattern.hasSuffix("/") ? String(pattern.dropLast()) : pattern

@@ -102,8 +102,20 @@ GitHub features require the existing `gh` CLI to be authenticated.
 ProjectPilot mirrors `~/Development` into iCloud Drive's `Development` folder,
 including Git history and excluding generated build/dependency folders. The local
 folder is the source of truth; files removed locally are removed from the mirror.
+ProjectPilot's own `Build` folder is excluded as generated Xcode output.
 
-Automatic backups use filesystem notifications. They wait for 60 seconds of quiet,
+Before each backup, ProjectPilot copies `~/.agents/skills` to
+`~/Development/skills/agents` and `~/.codex/skills` to `~/Development/skills/codex`,
+including hidden skill files. Skill edits trigger the same backup schedule.
+Skills are copied to iCloud before the larger development mirror. The `skills`
+folder includes restore instructions and is included in the iCloud
+mirror without the development build-folder exclusions. Edit the original skills,
+not the managed copies. If a skill library cannot be copied, the backup reports
+an error and does not proceed to the iCloud mirror. Plugin caches, credentials,
+and other Codex state are outside this skills-only backup.
+
+Backup monitoring starts when ProjectPilot launches, without opening its panel.
+An initial backup runs immediately. Subsequent backups use filesystem notifications and wait for 60 seconds of quiet,
 start no more than once every five minutes, and batch continuous edits for up to
 15 minutes. An hourly reconciliation catches missed events; failed attempts wait
 15 minutes before retrying. Opening Backup does not force a copy. **Back up now**

@@ -52,6 +52,39 @@ struct DevelopmentBackupEfficiencyTests {
             #expect(DevelopmentBackupMonitor.affectsBackup(path: path, root: "/source", exclusions: exclusions))
         }
         #expect(!DevelopmentBackupMonitor.affectsBackup(path: "/source-other/a", root: "/source", exclusions: exclusions))
+        #expect(DevelopmentBackupMonitor.affectsBackup(
+            path: "/source/skills/agents/example/build/reference.md", root: "/source", exclusions: ["build/"]
+        ))
+        #expect(!DevelopmentBackupMonitor.affectsBackup(
+            path: "/source/ProjectPilot/Build/Ticks/App", root: "/source", exclusions: ["/ProjectPilot/Build/"]
+        ))
+        for path in ["/source/ProjectPilot/ProjectPilotApp/Source.swift", "/source/Other/Build/Source.swift"] {
+            #expect(DevelopmentBackupMonitor.affectsBackup(path: path, root: "/source", exclusions: ["/ProjectPilot/Build/"]))
+        }
+    }
+
+    @Test func filesystemMonitorNoticesBothHiddenSkillLibraries() async throws {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".PPSkillsMonitorTest-\(UUID().uuidString)")
+        let development = home.appendingPathComponent("Development")
+        let sources = DevelopmentSkillsBackup.sourceURLs(homeDirectoryURL: home)
+        for root in [development] + sources {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        }
+        defer { try? FileManager.default.removeItem(at: home) }
+        let monitor = DevelopmentBackupMonitor(root: development, exclusions: ["build/"], additionalRoots: sources)
+        #expect(monitor.isWatching)
+        for source in sources {
+            #expect(monitor.beginIfNeeded(force: true))
+            monitor.finished(succeeded: true)
+            #expect(!monitor.hasPendingChanges)
+            try Data("skill".utf8).write(to: source.appendingPathComponent("SKILL.md"))
+            for _ in 0..<150 {
+                if monitor.hasPendingChanges { break }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            #expect(monitor.hasPendingChanges)
+        }
     }
 
     @Test func filesystemMonitorNoticesNestedSourceChanges() async throws {

@@ -608,9 +608,11 @@ final class ProjectPilotViewModel: ObservableObject {
     private func startDevelopmentBackupSyncLoop() {
         developmentBackupSyncTask?.cancel()
         developmentBackupMonitor = DevelopmentBackupMonitor(
-            root: Self.defaultDevelopmentSourceURL(), exclusions: Self.developmentBackupExcludedPaths
+            root: Self.defaultDevelopmentSourceURL(), exclusions: Self.developmentBackupExcludedPaths,
+            additionalRoots: DevelopmentSkillsBackup.sourceURLs(homeDirectoryURL: FileManager.default.homeDirectoryForCurrentUser)
         )
         developmentBackupSyncTask = Task { [weak self] in
+            await self?.syncDevelopmentBackupAsync(force: true)
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: .seconds(30))
@@ -688,7 +690,14 @@ final class ProjectPilotViewModel: ObservableObject {
                 throw PPCLIError(message: "Local Development folder not found.")
             }
 
+            try DevelopmentSkillsBackup.synchronize(homeDirectoryURL: fm.homeDirectoryForCurrentUser) { arguments in
+                _ = try Self.runProcess(arguments, timeoutSeconds: Self.developmentBackupCheckTimeoutSeconds)
+            }
             try fm.createDirectory(at: backupURL, withIntermediateDirectories: true)
+            _ = try Self.runProcess(
+                DevelopmentSkillsBackup.cloudMirrorArguments(developmentURL: sourceURL, backupURL: backupURL),
+                timeoutSeconds: Self.developmentBackupCheckTimeoutSeconds
+            )
             _ = try Self.runProcess(
                 Self.developmentBackupRsyncArguments(sourceURL: sourceURL, backupURL: backupURL, dryRun: false),
                 timeoutSeconds: Self.developmentBackupSyncTimeoutSeconds
@@ -774,6 +783,8 @@ final class ProjectPilotViewModel: ObservableObject {
         if dryRun {
             arguments.append(contentsOf: ["--dry-run", "--itemize-changes"])
         }
+        // Skill references/scripts can legitimately use names such as build or dist.
+        arguments.append("--include=/skills/***")
         for excludedPath in developmentBackupExcludedPaths {
             arguments.append("--exclude=\(excludedPath)")
         }
@@ -3253,6 +3264,7 @@ Provide:
         "xcuserdata/",
         "fsmonitor--daemon.ipc",
         "DerivedData/",
+        "/ProjectPilot/Build/",
         ".build/",
         "build/",
         "node_modules/",
