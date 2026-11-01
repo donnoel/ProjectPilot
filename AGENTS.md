@@ -42,3 +42,16 @@ For user-facing changes, check semantic controls, labels and values, reading and
 ## Validation
 
 Start with the touched target or focused test. Use broader tests only for shared architecture, persistence, startup, release behavior, or similarly broad changes. Documentation-only changes need diff and formatting checks, not an app build, unless project guidance says otherwise.
+
+## Fixed local Apple targets
+
+Owner direction, November 1, 2026: use one local setup across projects. Read
+`/Users/donnoel/Development/DevSystem/notes/APPLE-LOCAL-TARGETS.md` before simulator
+work. This supersedes older local simulator/compiler examples below; hosted CI
+remains separate.
+
+- Use `/Applications/Xcode-27-RC.app/Contents/Developer` for local work. No automatic fallback to Xcode 26.
+- Reuse **Local iPhone**, **Local iPad**, and **Local Apple TV**; Mac apps use **My Mac**, arm64, without a simulator. Fixed IDs/runtimes are in `APPLE-LOCAL-TARGETS.json` beside that guide.
+- Use `python3 /Users/donnoel/Development/DevSystem/scripts/apple-local.py run <iphone|ipad|appletv|mac> -- xcodebuild ...` for concrete local builds/tests. It pins the destination, prevents parallel test clones, and serializes helper commands per target.
+- For XcodeBuildMCP, verify session defaults, set the current project/scheme, and use the exact device settings from `apple-local.py mcp <target>` with `useLatestOS: false`. Do not use stale project/bundle defaults.
+- Never create task-named simulators, choose another runtime/compiler on failure, erase shared data, or kill another session's simulator. Report an unavailable/busy pinned target and coordinate instead. Additional coverage or historical CI reproduction requires an explicit task-specific exception.

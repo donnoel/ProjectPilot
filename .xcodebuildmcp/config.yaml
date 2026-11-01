@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "sessionDefaultsProfiles": {
+    "local-mac": {
+      "projectPath": "./ProjectPilot.xcodeproj",
+      "scheme": "ProjectPilot",
+      "configuration": "Debug",
+      "arch": "arm64",
+      "useLatestOS": false,
+      "extraArgs": [
+        "-parallel-testing-enabled",
+        "NO",
+        "-maximum-concurrent-test-simulator-destinations",
+        "1"
+      ],
+      "platform": "macOS"
+    }
+  },
+  "activeSessionDefaultsProfile": "local-mac"
+}
