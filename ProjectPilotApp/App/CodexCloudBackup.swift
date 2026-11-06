@@ -231,15 +231,16 @@ nonisolated enum CodexCloudBackup {
         return (try? file.read(upToCount: 16)) == Data("SQLite format 3\0".utf8)
     }
 
-    static func snapshotDatabase(from source: URL, to destination: URL, timeout: TimeInterval = 30) throws {
+    static func snapshotDatabase(from source: URL, to destination: URL, timeout: TimeInterval = 120) throws {
         var input: OpaquePointer?, output: OpaquePointer?
         defer { if let input { sqlite3_close(input) }; if let output { sqlite3_close(output) } }
         guard sqlite3_open_v2(source.path, &input, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
               sqlite3_open_v2(destination.path, &output, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK else {
             throw Failure("A Codex database could not be opened for a consistent snapshot. Previous archives were preserved.")
         }
-        // A read transaction fixes the WAL view while Codex continues writing to its WAL.
-        guard sqlite3_exec(input, "BEGIN", nil, nil, nil) == SQLITE_OK,
+        // BEGIN is deferred: an actual read must establish the WAL view before backup_init.
+        // Otherwise each live Codex write can restart the incremental copy indefinitely.
+        guard sqlite3_exec(input, "BEGIN; SELECT name FROM sqlite_schema LIMIT 1;", nil, nil, nil) == SQLITE_OK,
               let backup = sqlite3_backup_init(output, "main", input, "main") else {
             throw Failure("A Codex database snapshot could not be started. Previous archives were preserved.")
         }
@@ -252,7 +253,8 @@ nonisolated enum CodexCloudBackup {
         }
         let finished = sqlite3_backup_finish(backup)
         guard status == SQLITE_DONE, finished == SQLITE_OK else {
-            throw Failure("A Codex database stayed busy or failed during its snapshot. Previous archives were preserved; retry later.")
+            let reason = ProcessInfo.processInfo.systemUptime >= deadline ? "exceeded its time budget" : "failed (SQLite status \(status))"
+            throw Failure("The snapshot of \(source.lastPathComponent) \(reason). Previous archives were preserved; retry later.")
         }
         var statement: OpaquePointer?
         defer { sqlite3_finalize(statement) }

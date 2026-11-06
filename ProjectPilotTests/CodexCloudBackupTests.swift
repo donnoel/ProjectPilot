@@ -65,6 +65,41 @@ struct CodexCloudBackupTests {
         #expect(try String(contentsOf: home.appendingPathComponent("outside/keep.txt"), encoding: .utf8) == "outside")
     }
 
+    @Test func sqliteSnapshotFinishesWhileAnotherConnectionContinuouslyWrites() throws {
+        let home = try fixtureHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let source = home.appendingPathComponent(".codex/live.sqlite")
+        var creator: OpaquePointer?
+        #expect(sqlite3_open(source.path, &creator) == SQLITE_OK)
+        #expect(sqlite3_exec(creator, "PRAGMA journal_mode=WAL; CREATE TABLE proof(value TEXT, padding BLOB); INSERT INTO proof VALUES('initial',zeroblob(16777216));", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(creator)
+        let state = WriterState()
+        let ready = DispatchSemaphore(value: 0)
+        let done = DispatchGroup()
+        done.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { done.leave() }
+            var writer: OpaquePointer?
+            guard sqlite3_open(source.path, &writer) == SQLITE_OK else { state.fail(); ready.signal(); return }
+            defer { sqlite3_close(writer) }
+            sqlite3_busy_timeout(writer, 1000)
+            let deadline = ProcessInfo.processInfo.systemUptime + 10
+            var generation = 0
+            while !state.stopped, ProcessInfo.processInfo.systemUptime < deadline {
+                generation += 1
+                if sqlite3_exec(writer, "UPDATE proof SET value='\(generation)';", nil, nil, nil) != SQLITE_OK { state.fail() }
+                ready.signal()
+                sqlite3_sleep(1)
+            }
+        }
+        defer { state.stop(); done.wait() }
+        #expect(ready.wait(timeout: .now() + 3) == .success)
+        let copy = home.appendingPathComponent("fixed-view.sqlite")
+        try CodexCloudBackup.snapshotDatabase(from: source, to: copy, timeout: 5)
+        #expect(try Int(value(in: copy)) != nil)
+        #expect(!state.failed)
+    }
+
     @Test func retentionOnlyRemovesOldOwnedSnapshots() throws {
         let folder = try fixtureHome()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -146,6 +181,17 @@ struct CodexCloudBackupTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("PPCodexBackup-\(UUID().uuidString)").resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: root.appendingPathComponent(".codex"), withIntermediateDirectories: true)
         return root
+    }
+
+    /// Test-only shared flags; every read/write is protected by the same lock.
+    private final class WriterState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var shouldStop = false
+        private var didFail = false
+        var stopped: Bool { lock.withLock { shouldStop } }
+        var failed: Bool { lock.withLock { didFail } }
+        func stop() { lock.withLock { shouldStop = true } }
+        func fail() { lock.withLock { didFail = true } }
     }
 
     private func write(_ text: String, _ root: URL, _ relative: String) throws {
