@@ -112,7 +112,27 @@ folder includes restore instructions and is included in the iCloud
 mirror without the development build-folder exclusions. Edit the original skills,
 not the managed copies. If a skill library cannot be copied, the backup reports
 an error and does not proceed to the iCloud mirror. Plugin caches, credentials,
-and other Codex state are outside this skills-only backup.
+and other Codex state are outside this skills-only copy. The readable skills mirror
+continues alongside the encrypted Codex recovery backup below.
+
+### Encrypted Codex recovery backup
+
+The Backup tab can also protect important `~/.codex` data in AES-256 encrypted
+disk images, including conversation history, memories, settings, automations,
+skills, attachments, and unpublished worktree files. SQLite databases are captured
+with the online backup API and checked for integrity.
+
+Choose **Set up encrypted backup**, save a recovery password independently of this
+Mac, and confirm it in ProjectPilot. The local Keychain copy enables automatic
+hourly snapshots; the latest three are retained. Encrypted images and restore
+instructions live in `~/Development/CodexBackups` and the matching iCloud folder.
+Credentials, browser state, caches, downloaded plugins, and generated dependencies
+are excluded. A verified local iCloud copy does not prove server upload completed.
+
+See [Codex backup and restore](docs/CODEX_BACKUP.md) for the exact scope, password
+requirements, storage/retention behavior, and replacement-Mac recovery steps.
+
+### Development mirror schedule
 
 Backup monitoring starts when ProjectPilot launches, without opening its panel.
 An initial backup runs immediately. Subsequent backups use filesystem notifications and wait for 60 seconds of quiet,

@@ -9,6 +9,7 @@ struct ProjectPilotPopover: View {
     @AppStorage("projectPilot.selectedTab") private var storedMode = Mode.ticks.rawValue
     private var mode: Mode { Mode.persistedValue(for: storedMode) }
     @State private var confirmingVisibilityRepo: ProjectPilotViewModel.GitHubRepo? = nil
+    @State private var showingCodexBackupSetup = false
 
     enum Mode: String, CaseIterable, Identifiable {
         case ticks = "Ticks"
@@ -60,6 +61,7 @@ struct ProjectPilotPopover: View {
             activate(mode)
         }
         .onChange(of: mode) { _, newValue in activate(newValue) }
+        .sheet(isPresented: $showingCodexBackupSetup) { CodexBackupSetupView(vm: vm) }
     }
 
     private func activate(_ mode: Mode) {
@@ -374,6 +376,33 @@ struct ProjectPilotPopover: View {
     }
 
     private var backupSections: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            section("Encrypted Codex Backup") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(vm.codexBackupMessage)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("Codex backup status: \(vm.codexBackupMessage)")
+                    Text("Runs hourly • Keeps three recovery snapshots")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let date = vm.codexBackupLastCopiedAt {
+                        Text("Snapshot: \(date.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption)
+                    }
+                    if vm.isBackingUpCodex {
+                        ProgressView("Encrypting and copying Codex data…").controlSize(.small)
+                    } else if vm.codexBackupConfigured {
+                        Button("Back up Codex now") { vm.backUpCodexNow() }
+                            .disabled(vm.isSyncingDevelopmentBackup)
+                    } else {
+                        Button("Set up encrypted backup…") { showingCodexBackupSetup = true }
+                    }
+                    Button("Open Codex backups") {
+                        NSWorkspace.shared.open(CodexCloudBackup.localFolder(home: FileManager.default.homeDirectoryForCurrentUser))
+                    }
+                    .disabled(!FileManager.default.fileExists(atPath: CodexCloudBackup.localFolder(home: FileManager.default.homeDirectoryForCurrentUser).path))
+                }
+            }
         section("Development Backup") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 10) {
@@ -429,13 +458,15 @@ struct ProjectPilotPopover: View {
                 }
 
                 Button("Back up now") { vm.backUpDevelopmentNow() }
-                    .disabled(vm.isSyncingDevelopmentBackup)
+                    .disabled(vm.isSyncingDevelopmentBackup || vm.isBackingUpCodex)
 
             }
         }
         .onAppear {
             vm.ensureDevelopmentBackupIsCurrent()
         }
+        }
+        .onAppear { vm.refreshCodexBackupSetup() }
     }
 
     private var systemHealthSections: some View {

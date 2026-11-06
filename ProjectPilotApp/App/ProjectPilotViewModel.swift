@@ -291,6 +291,12 @@ final class ProjectPilotViewModel: ObservableObject {
     private var codexQuotaPollingTask: Task<Void, Never>? = nil
     private var developmentBackupSyncTask: Task<Void, Never>? = nil
     private var developmentBackupMonitor: DevelopmentBackupMonitor?
+    @Published private(set) var codexBackupConfigured = false
+    @Published private(set) var isBackingUpCodex = false
+    @Published private(set) var codexBackupMessage = "Set up a recovery password to protect local Codex data."
+    @Published private(set) var codexBackupLastCopiedAt: Date?
+    @Published private(set) var codexBackupError: String?
+    private var nextCodexBackupAttempt = Date.distantPast
 
     var canRetryGitHub: Bool {
         pendingGitHubRetryName != nil && pendingGitHubRetryPath != nil
@@ -462,7 +468,10 @@ final class ProjectPilotViewModel: ObservableObject {
     }
 
     func backUpDevelopmentNow() {
-        Task { await syncDevelopmentBackupAsync(force: true) }
+        Task {
+            await syncCodexBackupAsync(force: true)
+            await syncDevelopmentBackupAsync(force: true)
+        }
     }
 
     func refreshSystemHealth() {
@@ -612,6 +621,7 @@ final class ProjectPilotViewModel: ObservableObject {
             additionalRoots: DevelopmentSkillsBackup.sourceURLs(homeDirectoryURL: FileManager.default.homeDirectoryForCurrentUser)
         )
         developmentBackupSyncTask = Task { [weak self] in
+            await self?.syncCodexBackupAsync()
             await self?.syncDevelopmentBackupAsync(force: true)
             while !Task.isCancelled {
                 do {
@@ -620,13 +630,73 @@ final class ProjectPilotViewModel: ObservableObject {
                     break
                 }
                 guard let self else { return }
+                await self.syncCodexBackupAsync()
                 await self.syncDevelopmentBackupAsync()
             }
         }
     }
 
+    func refreshCodexBackupSetup() {
+        do {
+            codexBackupConfigured = try CodexBackupPassword.load() != nil
+        } catch {
+            codexBackupError = error.localizedDescription
+            codexBackupMessage = error.localizedDescription
+        }
+    }
+
+    func configureCodexBackup(password: String, confirmation: String, recoverySaved: Bool) async throws {
+        try CodexBackupPassword.validate(password, confirmation: confirmation, recoverySaved: recoverySaved)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        // On recovery, reject a different password rather than silently starting a new key history.
+        try await Task.detached(priority: .utility) {
+            if let receipt = try CodexCloudBackup.latestReceipt(in: CodexCloudBackup.localFolder(home: home)) {
+                try CodexCloudBackup.verifyImage(CodexCloudBackup.localFolder(home: home).appendingPathComponent(receipt.filename), password: password)
+            }
+            try CodexBackupPassword.saveNew(password)
+        }.value
+        codexBackupConfigured = true
+        nextCodexBackupAttempt = .distantPast
+        codexBackupError = nil
+        codexBackupMessage = "Password saved. The first encrypted snapshot will start after any current backup finishes."
+        backUpCodexNow()
+    }
+
+    func backUpCodexNow() {
+        Task { await syncCodexBackupAsync(force: true) }
+    }
+
+    private func syncCodexBackupAsync(force: Bool = false) async {
+        guard !isBackingUpCodex, !isSyncingDevelopmentBackup,
+              force || Date() >= nextCodexBackupAttempt else { return }
+        do {
+            guard let password = try CodexBackupPassword.load() else {
+                codexBackupConfigured = false
+                codexBackupMessage = "Setup needed: save a recovery password before encrypted Codex backups can run."
+                nextCodexBackupAttempt = Date().addingTimeInterval(CodexCloudBackup.interval)
+                return
+            }
+            codexBackupConfigured = true
+            isBackingUpCodex = true
+            codexBackupError = nil
+            codexBackupMessage = "Preparing and verifying an encrypted Codex snapshot. Large histories can take several minutes."
+            defer { isBackingUpCodex = false }
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let receipt = try await Task.detached(priority: .utility) {
+                try CodexCloudBackup.createAndCopy(home: home, password: password, force: force)
+            }.value
+            codexBackupLastCopiedAt = receipt.createdAt
+            codexBackupMessage = "Encrypted snapshot verified in the local iCloud folder. iCloud upload may still be pending."
+            nextCodexBackupAttempt = max(Date().addingTimeInterval(30), receipt.createdAt.addingTimeInterval(CodexCloudBackup.interval))
+        } catch {
+            codexBackupError = error.localizedDescription
+            codexBackupMessage = "Codex backup needs attention: \(error.localizedDescription)"
+            nextCodexBackupAttempt = Date().addingTimeInterval(15 * 60)
+        }
+    }
+
     private func syncDevelopmentBackupAsync(force: Bool = false) async {
-        guard !isSyncingDevelopmentBackup else { return }
+        guard !isSyncingDevelopmentBackup, !isBackingUpCodex else { return }
         guard let monitor = developmentBackupMonitor else { return }
         guard monitor.beginIfNeeded(force: force) else {
             if monitor.hasPendingChanges, developmentBackupStatus.state == .inSync {
@@ -842,9 +912,14 @@ final class ProjectPilotViewModel: ObservableObject {
         defer { isRefreshingSystemHealth = false }
 
         let backupStatus = developmentBackupStatus
-        systemHealthSnapshot = await Task.detached(priority: .utility) {
+        refreshCodexBackupSetup()
+        let codexWarning = SystemHealthChecker.codexBackupWarning(
+            configured: codexBackupConfigured, lastCopiedAt: codexBackupLastCopiedAt, error: codexBackupError
+        )
+        let snapshot = await Task.detached(priority: .utility) {
             SystemHealthChecker.check(backupStatus: backupStatus)
         }.value
+        systemHealthSnapshot = SystemHealthSnapshot(warnings: snapshot.warnings + [codexWarning].compactMap { $0 }, checkedAt: snapshot.checkedAt)
     }
 
     private func githubRepoActionPriority(_ repo: GitHubRepo) -> Int {
@@ -2988,13 +3063,17 @@ Provide:
         return ["/usr/bin/env", "gh"]
     }
 
-    nonisolated static func runProcess(_ argv: [String], cwd: URL? = nil, timeoutSeconds: TimeInterval? = nil) throws -> String {
+    nonisolated static func runProcess(
+        _ argv: [String], cwd: URL? = nil, timeoutSeconds: TimeInterval? = nil,
+        standardInput: Data? = nil
+    ) throws -> String {
         guard let exe = argv.first else { throw PPCLIError(message: "Invalid command.") }
         let args = Array(argv.dropFirst())
         let fm = FileManager.default
         let outputDirectoryURL = fm.temporaryDirectory
             .appendingPathComponent("ProjectPilotProcess-\(UUID().uuidString)", isDirectory: true)
-        try fm.createDirectory(at: outputDirectoryURL, withIntermediateDirectories: false)
+        try fm.createDirectory(at: outputDirectoryURL, withIntermediateDirectories: false,
+                               attributes: [.posixPermissions: 0o700])
         defer { try? fm.removeItem(at: outputDirectoryURL) }
 
         let stdoutURL = outputDirectoryURL.appendingPathComponent("stdout")
@@ -3018,10 +3097,23 @@ Provide:
 
         process.standardOutput = stdoutHandle
         process.standardError = stderrHandle
+        let inputPipe = standardInput.map { _ in Pipe() }
+        if let inputPipe { process.standardInput = inputPipe }
 
         let completion = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in completion.signal() }
         try process.run()
+        if let standardInput, let inputPipe {
+            do {
+                try inputPipe.fileHandleForWriting.write(contentsOf: standardInput)
+                try inputPipe.fileHandleForWriting.close()
+            } catch {
+                try? inputPipe.fileHandleForWriting.close()
+                if process.isRunning { process.terminate() }
+                process.waitUntilExit()
+                throw PPCLIError(message: "Unable to provide private input to the backup tool.")
+            }
+        }
         if let timeoutSeconds {
             if completion.wait(timeout: .now() + timeoutSeconds) == .timedOut, process.isRunning {
                 process.terminate()

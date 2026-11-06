@@ -35,6 +35,19 @@ archiving, manual time, voice memos and Auto Tick configuration stay in Tick.
   checkpoint is historical; the current follow-up is closed by Don's October 18 confirmation,
   without claiming new independent device verification.
 
+## Codex backup contract
+
+- `CodexCloudBackup` captures selected Codex data into AES-256 encrypted disk images.
+  Read `docs/CODEX_BACKUP.md` before changing its scope, encryption, retention, or
+  restore behavior. The existing readable skills mirror remains separate.
+- Preserve password recovery acknowledgment and device-only Keychain storage.
+  Never put passwords into process arguments, logs, archives, UserDefaults, Git,
+  or the cloud folder. No plaintext fallback on encryption failure.
+- Use consistent SQLite snapshots and integrity checks, serialize backup writers,
+  verify ciphertext before rotation, and preserve the last good archive on failure.
+- Label the local iCloud copy separately from confirmed server upload. Fixture
+  restore tests do not establish a successful rebuild of the user's real Mac.
+
 ## Concurrency rules (important)
 We are using Swift 6-era concurrency checks. Do NOT silence them with broad isolation.
 - UI-bound view state in `ProjectPilotViewModel` can remain `@MainActor`.
