@@ -233,16 +233,33 @@ private struct ActiveTickDetailsEditor: View {
                     .foregroundStyle(.secondary)
             }
 
-            Form {
-                TextField("Description", text: $title)
-                    .accessibilityLabel("Tick description")
-                    .accessibilityHint("Enter a short description of the work being recorded.")
-                TextField("Notes", text: $notes, axis: .vertical)
-                    .lineLimit(4...8)
-                    .accessibilityLabel("Tick notes")
-                    .accessibilityHint("Enter optional notes for the work being recorded.")
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("Description")
+                        .frame(width: 76, alignment: .leading)
+                        .accessibilityHidden(true)
+                    TextField("", text: $title)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityLabel("Description")
+                        .accessibilityHint("Enter a short description of the work being recorded.")
+                }
+
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text("Notes")
+                        .frame(width: 76, alignment: .leading)
+                        .accessibilityHidden(true)
+                    TextField("", text: $notes, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(4...8)
+                        .accessibilityLabel("Notes")
+                        .accessibilityHint("Enter optional notes for the work being recorded.")
+                }
             }
-            .formStyle(.grouped)
+            .font(.body)
 
             if didFailToSave {
                 Label(model.errorMessage ?? "Tick details could not be saved. Try again.", systemImage: "exclamationmark.icloud")
