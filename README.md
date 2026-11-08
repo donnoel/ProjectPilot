@@ -124,9 +124,11 @@ skills, attachments, and unpublished worktree files. SQLite databases are captur
 with the online backup API and checked for integrity.
 
 Choose **Set up encrypted backup**, save a recovery password independently of this
-Mac, and confirm it in ProjectPilot. The local Keychain copy enables automatic
-hourly snapshots; the latest three are retained. Encrypted images and restore
-instructions live in `~/Development/CodexBackups` and the matching iCloud folder.
+Mac, and confirm it in ProjectPilot. The local Keychain copy enables an encrypted
+baseline followed by hourly delta images containing only changed files and deletion
+metadata. A new full baseline compacts the chain after 30 days or 120 deltas.
+Encrypted images and restore instructions live in `~/Development/CodexBackups`
+and the matching iCloud folder.
 Credentials, browser state, caches, downloaded plugins, and generated dependencies
 are excluded. A verified local iCloud copy does not prove server upload completed.
 

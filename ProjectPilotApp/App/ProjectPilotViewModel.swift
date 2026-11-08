@@ -658,7 +658,7 @@ final class ProjectPilotViewModel: ObservableObject {
         codexBackupConfigured = true
         nextCodexBackupAttempt = .distantPast
         codexBackupError = nil
-        codexBackupMessage = "Password saved. The first encrypted snapshot will start after any current backup finishes."
+        codexBackupMessage = "Password saved. The first encrypted baseline will start after any current backup finishes."
         backUpCodexNow()
     }
 
@@ -679,15 +679,17 @@ final class ProjectPilotViewModel: ObservableObject {
             codexBackupConfigured = true
             isBackingUpCodex = true
             codexBackupError = nil
-            codexBackupMessage = "Preparing and verifying an encrypted Codex snapshot. Large histories can take several minutes."
+            codexBackupMessage = "Preparing and verifying an encrypted Codex backup. Only changed files are added after the baseline."
             defer { isBackingUpCodex = false }
             let home = FileManager.default.homeDirectoryForCurrentUser
             let receipt = try await Task.detached(priority: .utility) {
                 try CodexCloudBackup.createAndCopy(home: home, password: password, force: force)
             }.value
-            codexBackupLastCopiedAt = receipt.createdAt
-            codexBackupMessage = "Encrypted snapshot verified in the local iCloud folder. iCloud upload may still be pending."
-            nextCodexBackupAttempt = max(Date().addingTimeInterval(30), receipt.createdAt.addingTimeInterval(CodexCloudBackup.interval))
+            codexBackupLastCopiedAt = Date()
+            codexBackupMessage = receipt.mode == "delta"
+                ? "Encrypted incremental update verified in the local iCloud folder. iCloud upload may still be pending."
+                : "Encrypted baseline verified in the local iCloud folder. iCloud upload may still be pending."
+            nextCodexBackupAttempt = Date().addingTimeInterval(CodexCloudBackup.interval)
         } catch {
             codexBackupError = error.localizedDescription
             codexBackupMessage = "Codex backup needs attention: \(error.localizedDescription)"

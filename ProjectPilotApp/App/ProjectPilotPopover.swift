@@ -383,14 +383,14 @@ struct ProjectPilotPopover: View {
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityLabel("Codex backup status: \(vm.codexBackupMessage)")
-                    Text("Runs hourly • Keeps three recovery snapshots")
+                    Text("Runs hourly • One baseline plus encrypted changes")
                         .font(.caption).foregroundStyle(.secondary)
                     if let date = vm.codexBackupLastCopiedAt {
-                        Text("Snapshot: \(date.formatted(date: .abbreviated, time: .shortened))")
+                        Text("Verified: \(date.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption)
                     }
                     if vm.isBackingUpCodex {
-                        ProgressView("Encrypting and copying Codex data…").controlSize(.small)
+                        ProgressView("Encrypting changed Codex data…").controlSize(.small)
                     } else if vm.codexBackupConfigured {
                         Button("Back up Codex now") { vm.backUpCodexNow() }
                             .disabled(vm.isSyncingDevelopmentBackup)
