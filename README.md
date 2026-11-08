@@ -34,8 +34,9 @@ Don confirmed the current ProjectPilot work is complete, with nothing outstandin
 
 ### Tabs
 
-- **Ticks** — choose an existing Space, see the active or paused Tick, and
-  Start/Stop recording. Create and manage Spaces in Ticks on iPhone or iPad.
+- **Ticks** — choose an existing Space, see the active or paused Tick, edit its
+  description and notes, and Start/Pause/Resume/Stop recording. Create and manage
+  Spaces in Ticks on iPhone or iPad.
 - **Codex** — inspect usage limits and credits from local Codex session data.
 - **GitHub** — browse repositories with separate local Git sync and current-default-branch CI status.
 - **Backup** — check and update the development-folder mirror in iCloud Drive.

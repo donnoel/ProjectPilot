@@ -15,8 +15,9 @@ Ticks is the initial default. Basic/Advanced, Create, pipeline progress and scaf
 keyboard shortcuts are removed from the UI. The legacy scaffold engine remains
 internally and its invariants below still apply when touching that code.
 
-Ticks can list unarchived Spaces and Start/Pause/Resume/Stop a timer. Space creation, editing,
-archiving, manual time, voice memos and Auto Tick configuration stay in Tick.
+Ticks can list unarchived Spaces, Start/Pause/Resume/Stop a timer, and edit the displayed
+running Tick's description and notes. Space creation, editing, archiving, manual time,
+voice memos and Auto Tick configuration stay in Tick.
 
 ## Architecture snapshot
 

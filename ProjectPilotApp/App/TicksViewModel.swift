@@ -45,6 +45,10 @@ final class TicksViewModel: ObservableObject {
     var canStop: Bool { !isBusy && !writesBlocked && state.canRecord && activeSession != nil }
     var canPause: Bool { canStop && activeSession?.pausedAt == nil }
     var canResume: Bool { canStop && activeSession?.pausedAt != nil }
+    func canEditDetails(for sessionID: UUID) -> Bool {
+        !isBusy && !writesBlocked && state.canRecord &&
+            state.snapshot.sessions.contains { $0.id == sessionID && $0.isActive }
+    }
 
     struct WeeklySpace: Identifiable {
         let id: UUID
@@ -126,8 +130,27 @@ final class TicksViewModel: ObservableObject {
         await perform { try await self.store.stop(sessionID: sessionID, at: date) }
     }
 
-    private func perform(_ operation: () async throws -> TicksState) async {
-        guard !isBusy else { return }
+    @discardableResult
+    func updateDetails(sessionID: UUID, title: String, notes: String) async -> Bool {
+        guard canEditDetails(for: sessionID) else { return false }
+        let expectedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        return await perform(
+            { try await self.store.updateDetails(sessionID: sessionID, title: title, notes: notes) },
+            acceptingCachedState: { state in
+                state.snapshot.sessions.contains {
+                    $0.id == sessionID && $0.title == expectedTitle && $0.notes == expectedNotes
+                }
+            }
+        )
+    }
+
+    @discardableResult
+    private func perform(
+        _ operation: () async throws -> TicksState,
+        acceptingCachedState: ((TicksState) -> Bool)? = nil
+    ) async -> Bool {
+        guard !isBusy else { return false }
         isBusy = true
         defer { isBusy = false }
         do {
@@ -135,12 +158,17 @@ final class TicksViewModel: ObservableObject {
             apply(try await operation())
             writesBlocked = false
             errorMessage = nil
+            hasLoaded = true
+            return true
         } catch {
-            if let cached = try? await store.load() { apply(cached) }
+            let cached = try? await store.load()
+            if let cached { apply(cached) }
             writesBlocked = !TicksStore.isTemporaryCloudFailure(error) && !(error is TickTimerMutation.Failure)
             errorMessage = error.localizedDescription
+            hasLoaded = true
+            return TicksStore.isTemporaryCloudFailure(error) &&
+                cached.map { acceptingCachedState?($0) == true } == true
         }
-        hasLoaded = true
     }
 
     private func apply(_ state: TicksState) {

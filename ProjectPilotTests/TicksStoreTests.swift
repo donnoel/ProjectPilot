@@ -49,6 +49,31 @@ struct TicksStoreTests {
         #expect(resumed.snapshot.sessions[0].duration(at: Date(timeIntervalSince1970: 380)) == 120)
     }
 
+    @Test func activeTickDetailsSyncAcrossClients() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let payload = fixture()
+        let cloud = FakeTicksCloud(payload)
+        let mac = TicksStore(transport: cloud, fileURL: root.appendingPathComponent("mac.json"))
+        let phone = TicksStore(transport: cloud, fileURL: root.appendingPathComponent("phone.json"))
+        let running = try await mac.start(
+            projectID: payload.snapshot.projects[0].id,
+            at: Date(timeIntervalSince1970: 200)
+        )
+        let sessionID = try #require(running.snapshot.sessions.first?.id)
+
+        _ = try await mac.updateDetails(
+            sessionID: sessionID,
+            title: "Review launch plan",
+            notes: "Capture follow-up items."
+        )
+        let received = try await phone.refresh()
+
+        #expect(received.snapshot.sessions.first?.title == "Review launch plan")
+        #expect(received.snapshot.sessions.first?.notes == "Capture follow-up items.")
+        #expect(received.snapshot.sessions.first?.isActive == true)
+    }
+
     @Test func offlineOutboxSurvivesRelaunchAndPreservesRemoteRename() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

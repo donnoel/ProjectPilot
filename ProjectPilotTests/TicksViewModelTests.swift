@@ -65,6 +65,62 @@ struct TicksViewModelTests {
         #expect(model.canStart)
     }
 
+    @Test func runningTickDetailsSaveThroughTheViewModel() async throws {
+        var fixture = makeState()
+        let sessionID = UUID()
+        try TickTimerMutation.start(
+            in: &fixture.snapshot,
+            projectID: fixture.snapshot.projects[0].id,
+            sessionID: sessionID,
+            at: .now
+        )
+        let store = ViewModelTestStore(state: fixture)
+        let suite = "TicksViewModelTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = TicksViewModel(store: store, defaults: defaults)
+        await model.refresh()
+
+        let saved = await model.updateDetails(
+            sessionID: sessionID,
+            title: "  Review launch plan  ",
+            notes: " Capture follow-up items. "
+        )
+
+        #expect(saved)
+        #expect(model.activeSession?.title == "Review launch plan")
+        #expect(model.activeSession?.notes == "Capture follow-up items.")
+    }
+
+    @Test func offlineRunningTickDetailsDismissAfterSavingToTheOutbox() async throws {
+        var fixture = makeState()
+        let sessionID = UUID()
+        try TickTimerMutation.start(
+            in: &fixture.snapshot,
+            projectID: fixture.snapshot.projects[0].id,
+            sessionID: sessionID,
+            at: .now
+        )
+        let store = ViewModelTestStore(state: fixture)
+        let suite = "TicksViewModelTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = TicksViewModel(store: store, defaults: defaults)
+        await model.refresh()
+        await store.setFailure(.networkUnavailable)
+
+        let saved = await model.updateDetails(
+            sessionID: sessionID,
+            title: "Offline work",
+            notes: "Saved before reconnecting."
+        )
+
+        #expect(saved)
+        #expect(model.activeSession?.title == "Offline work")
+        #expect(model.state.hasPendingChanges)
+        #expect(model.syncStatus == "Saved locally—waiting for iCloud")
+    }
+
     private func makeState() -> TicksState {
         let snapshot = TickWidgetStorageSnapshot(projects: [TickWidgetStoredProject(
             id: UUID(), name: "Beam", createdAt: .now, isArchived: false
@@ -76,9 +132,10 @@ struct TicksViewModelTests {
 }
 
 private actor ViewModelTestStore: TicksStoring {
-    let state: TicksState
-    let failure: CKError.Code?
+    var state: TicksState
+    var failure: CKError.Code?
     init(state: TicksState, failure: CKError.Code? = nil) { self.state = state; self.failure = failure }
+    func setFailure(_ failure: CKError.Code?) { self.failure = failure }
     func load() -> TicksState { state }
     func refresh() throws -> TicksState {
         if let failure { throw CKError(failure) }
@@ -88,4 +145,14 @@ private actor ViewModelTestStore: TicksStoring {
     func pause(sessionID: UUID, at date: Date) throws -> TicksState { try refresh() }
     func resume(sessionID: UUID, at date: Date) throws -> TicksState { try refresh() }
     func stop(sessionID: UUID, at date: Date) throws -> TicksState { try refresh() }
+    func updateDetails(sessionID: UUID, title: String, notes: String) throws -> TicksState {
+        try TickTimerMutation.updateDetails(
+            in: &state.snapshot,
+            sessionID: sessionID,
+            title: title,
+            notes: notes
+        )
+        if let failure { throw CKError(failure) }
+        return state
+    }
 }

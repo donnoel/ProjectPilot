@@ -1,7 +1,8 @@
 # Ticks integration
 
 ProjectPilot is a Mac client for the existing Ticks data. It lists unarchived
-Spaces and starts/stops one timer. Create/edit/archive Spaces in the mobile app.
+Spaces, controls one displayed timer, and edits that running Tick's description
+and notes. Create/edit/archive Spaces in the mobile app.
 Codex, GitHub and Backup remain available. The scaffold engine and its tests are
 retained internally; its Basic/Advanced tabs, Create button and shortcuts are gone.
 
@@ -59,7 +60,8 @@ action round trip. The current follow-up is closed by the owner confirmation abo
 
 ## Behavior and recovery
 
-- Start/Pause/Resume/Stop refresh first when online. The action keeps the time the user clicked.
+- Start/Pause/Resume/Stop and description/notes edits refresh first when online. Timer actions keep the time the user clicked.
+- Description/notes edits target the displayed running session ID, trim surrounding whitespace, and never change timing.
 - Offline capture requires a previously loaded, account-bound cloud snapshot.
   Changes persist locally and retry; authentication/data errors block mutation.
 - Stop targets the displayed session ID, never a replacement timer that arrived

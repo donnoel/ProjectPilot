@@ -3,6 +3,7 @@ import TickCore
 
 struct TicksView: View {
     @ObservedObject var model: TicksViewModel
+    @State private var detailsSession: TickWidgetStoredSession?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -56,6 +57,13 @@ struct TicksView: View {
                         .accessibilityIdentifier("ticks.stop")
                     }
                     .controlSize(.large)
+
+                    Button("Edit description and notes", systemImage: "square.and.pencil") {
+                        detailsSession = session
+                    }
+                    .disabled(!model.canEditDetails(for: session.id))
+                    .accessibilityHint("Opens an editor for the active Tick's description and notes.")
+                    .accessibilityIdentifier("ticks.editDetails")
                 }
                 .frame(maxWidth: .infinity)
                 .padding(18)
@@ -121,6 +129,9 @@ struct TicksView: View {
             await model.refresh()
         }
         .onDisappear { model.isVisible = false }
+        .sheet(item: $detailsSession) { session in
+            ActiveTickDetailsEditor(model: model, session: session)
+        }
     }
 
     private var emptyMessage: String {
@@ -193,5 +204,89 @@ struct TicksView: View {
     private static func spokenDuration(_ duration: TimeInterval) -> String {
         let seconds = Int(max(0, duration))
         return "\(seconds / 3600) hours, \((seconds % 3600) / 60) minutes, \(seconds % 60) seconds"
+    }
+}
+
+private struct ActiveTickDetailsEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: TicksViewModel
+    let session: TickWidgetStoredSession
+    @State private var title: String
+    @State private var notes: String
+    @State private var isSaving = false
+    @State private var didFailToSave = false
+
+    init(model: TicksViewModel, session: TickWidgetStoredSession) {
+        self.model = model
+        self.session = session
+        _title = State(initialValue: session.title)
+        _notes = State(initialValue: session.notes)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Edit Tick Details")
+                    .font(.title2.weight(.semibold))
+                Text("Update the description and notes without interrupting the running Tick.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Form {
+                TextField("Description", text: $title)
+                    .accessibilityLabel("Tick description")
+                    .accessibilityHint("Enter a short description of the work being recorded.")
+                TextField("Notes", text: $notes, axis: .vertical)
+                    .lineLimit(4...8)
+                    .accessibilityLabel("Tick notes")
+                    .accessibilityHint("Enter optional notes for the work being recorded.")
+            }
+            .formStyle(.grouped)
+
+            if didFailToSave {
+                Label(model.errorMessage ?? "Tick details could not be saved. Try again.", systemImage: "exclamationmark.icloud")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("ticks.editDetailsError")
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    Task {
+                        isSaving = true
+                        didFailToSave = false
+                        let saved = await model.updateDetails(
+                            sessionID: session.id,
+                            title: title,
+                            notes: notes
+                        )
+                        isSaving = false
+                        if saved {
+                            dismiss()
+                        } else {
+                            didFailToSave = true
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(isSaving || !hasChanges)
+                .accessibilityHint("Saves the description and notes to this Tick and syncs them with iCloud.")
+                .accessibilityIdentifier("ticks.editDetailsSave")
+            }
+        }
+        .padding(20)
+        .frame(width: 440, height: 340)
+        .disabled(isSaving)
+    }
+
+    private var hasChanges: Bool {
+        title.trimmingCharacters(in: .whitespacesAndNewlines) != session.title ||
+            notes.trimmingCharacters(in: .whitespacesAndNewlines) != session.notes
     }
 }

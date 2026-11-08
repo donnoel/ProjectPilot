@@ -21,6 +21,7 @@ nonisolated protocol TicksStoring: Sendable {
     func pause(sessionID: UUID, at date: Date) async throws -> TicksState
     func resume(sessionID: UUID, at date: Date) async throws -> TicksState
     func stop(sessionID: UUID, at date: Date) async throws -> TicksState
+    func updateDetails(sessionID: UUID, title: String, notes: String) async throws -> TicksState
 }
 
 /// The Mac owns its cache. Only CloudKit connects it to the iPhone and iPad;
@@ -98,6 +99,20 @@ actor TicksStore: TicksStoring {
         var state = try load()
         guard state.canRecord else { throw Failure.needsFirstSync }
         try TickTimerMutation.stop(in: &state.snapshot, sessionID: sessionID, at: date)
+        try save(state)
+        return try await refresh()
+    }
+
+    func updateDetails(sessionID: UUID, title: String, notes: String) async throws -> TicksState {
+        try await refreshBeforeAction()
+        var state = try load()
+        guard state.canRecord else { throw Failure.needsFirstSync }
+        try TickTimerMutation.updateDetails(
+            in: &state.snapshot,
+            sessionID: sessionID,
+            title: title,
+            notes: notes
+        )
         try save(state)
         return try await refresh()
     }
