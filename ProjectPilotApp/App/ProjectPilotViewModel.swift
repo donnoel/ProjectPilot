@@ -972,7 +972,7 @@ final class ProjectPilotViewModel: ObservableObject {
                     gh + [
                         "repo", "list",
                         "--limit", "200",
-                        "--json", "nameWithOwner,url,isPrivate,createdAt,updatedAt,defaultBranchRef"
+                        "--json", "nameWithOwner,url,isPrivate,isArchived,createdAt,updatedAt,defaultBranchRef"
                     ]
                 )
 
@@ -1491,13 +1491,15 @@ final class ProjectPilotViewModel: ObservableObject {
         }
     }
 
-    private nonisolated static func parseGitHubRepos(fromJSON json: String) throws -> [GitHubRepo] {
+    nonisolated static func parseGitHubRepos(fromJSON json: String) throws -> [GitHubRepo] {
         let object = try parseJSONObject(fromJSON: json)
         guard let items = object as? [[String: Any]] else {
             throw PPCLIError(message: "Unexpected GitHub repo list format.")
         }
 
-        return try items.map(parseGitHubRepo(fromJSONObject:))
+        return try items
+            .filter { $0["isArchived"] as? Bool != true }
+            .map(parseGitHubRepo(fromJSONObject:))
     }
 
     private nonisolated static func parseGitHubRepo(fromJSON json: String) throws -> GitHubRepo {

@@ -168,6 +168,29 @@ struct ProjectPilotTests {
         )
     }
 
+    @Test func githubRepoParserExcludesArchivedRepositories() throws {
+        let json = """
+        [
+          {
+            "nameWithOwner": "donnoel/Active",
+            "url": "https://github.com/donnoel/Active",
+            "isPrivate": true,
+            "isArchived": false
+          },
+          {
+            "nameWithOwner": "donnoel/Archived",
+            "url": "https://github.com/donnoel/Archived",
+            "isPrivate": true,
+            "isArchived": true
+          }
+        ]
+        """
+
+        let repos = try ProjectPilotViewModel.parseGitHubRepos(fromJSON: json)
+
+        #expect(repos.map(\.nameWithOwner) == ["donnoel/Active"])
+    }
+
     @Test func repoSyncStateReportsLocalChangesWhenCommitsMatchAndWorktreeIsDirty() {
         let state = ProjectPilotViewModel.repoSyncState(
             ahead: 0,
