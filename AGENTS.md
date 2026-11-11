@@ -55,3 +55,21 @@ remains separate.
 - Use `python3 /Users/donnoel/Development/DevSystem/scripts/apple-local.py run <iphone|ipad|appletv|mac> -- xcodebuild ...` for concrete local builds/tests. It pins the destination, prevents parallel test clones, and serializes helper commands per target.
 - For XcodeBuildMCP, verify session defaults, set the current project/scheme, and use the exact device settings from `apple-local.py mcp <target>` with `useLatestOS: false`. Do not use stale project/bundle defaults.
 - Never create task-named simulators, choose another runtime/compiler on failure, erase shared data, or kill another session's simulator. Report an unavailable/busy pinned target and coordinate instead. Additional coverage or historical CI reproduction requires an explicit task-specific exception.
+
+## Session summaries for Tix
+
+When Don says **"summary please,"** return only the following format:
+
+**Description:** One short sentence describing the problem addressed or work
+accomplished.
+
+**Summary:** A concise paragraph covering the cause, changes, verification, and
+any outstanding follow-up. Include release versions and deployment status when
+relevant.
+
+**Commit:** Short commit hash and exact commit subject. List multiple commits
+when applicable; state "No commits made" when appropriate.
+
+Cover the current working session. Report only verified results, distinguishing
+completed work from pending checks or acceptance. The Description goes into
+Tix's description field; Summary and Commit go into its notes.
