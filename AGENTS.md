@@ -51,8 +51,8 @@ work. This supersedes older local simulator/compiler examples below; hosted CI
 remains separate.
 
 - Use `/Applications/Xcode-27-RC.app/Contents/Developer` for local work. No automatic fallback to Xcode 26.
-- Reuse **Local iPhone**, **Local iPad**, and **Local Apple TV**; Mac apps use **My Mac**, arm64, without a simulator. Fixed IDs/runtimes are in `APPLE-LOCAL-TARGETS.json` beside that guide.
-- Use `python3 /Users/donnoel/Development/DevSystem/scripts/apple-local.py run <iphone|ipad|appletv|mac> -- xcodebuild ...` for concrete local builds/tests. It pins the destination, prevents parallel test clones, and serializes helper commands per target.
+- Reuse **Local iPhone** as the only simulator; use Don's physical devices for platform acceptance. Mac apps use **My Mac**, arm64, without a simulator. Fixed IDs/runtimes are in `APPLE-LOCAL-TARGETS.json` beside that guide.
+- Use `python3 /Users/donnoel/Development/DevSystem/scripts/apple-local.py run <iphone|mac> -- xcodebuild ...` for concrete local builds/tests. It pins the destination, prevents parallel test clones, and serializes helper commands per target.
 - For XcodeBuildMCP, verify session defaults, set the current project/scheme, and use the exact device settings from `apple-local.py mcp <target>` with `useLatestOS: false`. Do not use stale project/bundle defaults.
 - Never create task-named simulators, choose another runtime/compiler on failure, erase shared data, or kill another session's simulator. Report an unavailable/busy pinned target and coordinate instead. Additional coverage or historical CI reproduction requires an explicit task-specific exception.
 
