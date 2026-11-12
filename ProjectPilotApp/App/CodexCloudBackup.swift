@@ -23,6 +23,8 @@ nonisolated enum CodexCloudBackup {
         var sequence: Int? = nil
         var baseFilename: String? = nil
         var previousFilename: String? = nil
+        var encryptedBytes: Int64? = nil
+        var restoreVerifiedAt: Date? = nil
     }
 
     struct Snapshot: Codable, Sendable {
@@ -32,59 +34,23 @@ nonisolated enum CodexCloudBackup {
         var databaseCount = 0
     }
 
-    struct ManifestEntry: Codable, Equatable, Sendable {
+    struct RecoveryEntry: Codable, Equatable, Sendable {
         let kind: String
-        let size: Int64
-        let modifiedAt: Date
-        let linkDestination: String?
+        let digestOrTarget: String
     }
 
-    struct BackupState: Codable, Equatable, Sendable {
+    struct RecoveryIndex: Codable, Sendable {
         let version: Int
-        let chainID: String
-        let baseCreatedAt: Date
-        let latestFilename: String
-        let sequence: Int
-        let artifacts: [String]
-        let manifest: [String: ManifestEntry]
-
-        func replacingManifest(_ value: [String: ManifestEntry]) -> BackupState {
-            BackupState(version: version, chainID: chainID, baseCreatedAt: baseCreatedAt,
-                        latestFilename: latestFilename, sequence: sequence,
-                        artifacts: artifacts, manifest: value)
-        }
-    }
-
-    struct ChainIndex: Codable, Equatable, Sendable {
-        let version: Int
-        let chainID: String
-        let artifacts: [String]
-    }
-
-    struct DeltaMetadata: Codable, Equatable, Sendable {
-        let version: Int
-        let chainID: String
-        let sequence: Int
-        let previousFilename: String
-        let changedPaths: [String]
-        let deletedPaths: [String]
-    }
-
-    private struct CreatedBackup {
-        let receipt: Receipt
-        let state: BackupState
+        let kits: [Receipt]
     }
 
     static let folderName = "CodexBackups"
-    static let interval: TimeInterval = 60 * 60
-    static let fullSnapshotInterval: TimeInterval = 30 * 24 * 60 * 60
-    static let maximumDeltaCount = 120
-    static let directories: Set<String> = [
-        "sessions", "archived_sessions", "memories", "memories_v2", "automations",
-        "rules", "skills", "attachments", "generated_images", "visualizations",
-        "worktrees", "sqlite", "state", "dictation-history"
-    ]
-    static let files: Set<String> = ["AGENTS.md", "config.toml", ".codex-global-state.json", "session_index.jsonl", "history.jsonl"]
+    static let interval: TimeInterval = 24 * 60 * 60
+    static let maximumSourceBytes: Int64 = 1024 * 1024 * 1024
+    static let maximumImageBytes: Int64 = 512 * 1024 * 1024
+    static let maximumStoredBytes: Int64 = 2 * 1024 * 1024 * 1024
+    static let directories: Set<String> = ["memories", "memories_v2", "automations", "rules", "skills", "worktrees"]
+    static let files: Set<String> = ["AGENTS.md", "AGENTS.override.md", "config.toml", ".codex-global-state.json"]
 
     static func localFolder(home: URL) -> URL {
         home.appendingPathComponent("Development/\(folderName)", isDirectory: true)
@@ -94,15 +60,11 @@ nonisolated enum CodexCloudBackup {
         home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/Development/\(folderName)", isDirectory: true)
     }
 
-    static func stateURL(home: URL) -> URL {
-        home.appendingPathComponent("Library/Application Support/ProjectPilot/CodexBackupState.json")
-    }
-
     static func latestReceipt(in folder: URL) throws -> Receipt? {
         let url = folder.appendingPathComponent("Latest.json")
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let value = try JSONDecoder().decode(Receipt.self, from: Data(contentsOf: url))
-        guard [1, 2].contains(value.version), isSnapshotFilename(value.filename), value.sha256.count == 64 else {
+        guard [1, 2, 3].contains(value.version), isSnapshotFilename(value.filename), value.sha256.count == 64 else {
             throw Failure("The Codex backup receipt is invalid; existing snapshots were preserved.")
         }
         return value
@@ -116,21 +78,17 @@ nonisolated enum CodexCloudBackup {
         guard let first = parts.first else { return false }
         if parts.count == 1 {
             if isDirectory { return directories.contains(first) }
-            return files.contains(first) || (["sqlite", "sqlite3", "db"].contains((first as NSString).pathExtension) && !first.hasPrefix("logs_"))
+            return files.contains(first) || (first.hasPrefix("memories_") && first.hasSuffix(".sqlite"))
         }
-        guard directories.contains(first) else { return false }
-        if let name = parts.last {
-            if ["sqlite", "sqlite3", "db"].contains(where: { ext in
-                ["wal", "shm", "journal"].contains { name.hasSuffix(".\(ext)-\($0)") }
-            }) { return false }
-            if first == "sqlite", name.hasPrefix("logs_") { return false }
-        }
-        if first == "worktrees" || first == "automations" {
+        guard directories.contains(first), let name = parts.last else { return false }
+        if first == "automations" { return isDirectory ? parts.count <= 2 : parts.count == 3 && name == "automation.toml" }
+        if ["wal", "shm", "journal"].contains(where: { name.hasSuffix("-" + $0) }) || name.hasSuffix(".lock") || name == ".DS_Store" { return false }
+        if first == "worktrees" {
             let generated: Set<String> = ["node_modules", ".venv", ".build", "DerivedData", "Build", "build", "dist", ".next", ".cache", "cdk.out"]
             if parts.dropFirst().contains(where: generated.contains) { return false }
-            if isDirectory && parts.last == ".git" { return false }
+            if isDirectory && name == ".git" { return false }
         }
-        return !(parts.last?.hasSuffix(".lock") ?? false)
+        return true
     }
 
     static func createAndCopy(home: URL, password: String, force: Bool, now: Date = Date()) throws -> Receipt {
@@ -145,132 +103,147 @@ nonisolated enum CodexCloudBackup {
         defer { close(descriptor) }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { throw Failure("Another ProjectPilot process is backing up Codex. Wait for it to finish.") }
         defer { flock(descriptor, LOCK_UN) }
-        // A crashed process may leave private plaintext staging. Only this service's UUID folders are removed.
         for old in try fm.contentsOfDirectory(at: stagingParent, includingPropertiesForKeys: nil) where UUID(uuidString: old.lastPathComponent) != nil {
             try rejectRedirectedDestination(old)
             try fm.removeItem(at: old)
         }
-        for folder in [home.appendingPathComponent("Development"), local,
-                       cloud.deletingLastPathComponent(), cloud] { try rejectRedirectedDestination(folder) }
+        for folder in [home.appendingPathComponent("Development"), local, cloud.deletingLastPathComponent(), cloud] {
+            try rejectRedirectedDestination(folder)
+        }
         try fm.createDirectory(at: local, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try fm.createDirectory(at: cloud, withIntermediateDirectories: true)
         let previous = try latestReceipt(in: local)
-        var state = try loadState(home: home, matching: previous)
-        var created: CreatedBackup?
-        if needsSnapshot(receipt: previous, now: now, force: force) {
-            if let previous {
-                if state == nil {
-                    let current = try manifest(home: home)
-                    let assumedBaseline = current.filter { $0.value.modifiedAt < previous.createdAt }
-                    state = BackupState(version: 1, chainID: UUID().uuidString,
-                                        baseCreatedAt: previous.createdAt, latestFilename: previous.filename,
-                                        sequence: 0, artifacts: [previous.filename], manifest: assumedBaseline)
-                }
-                guard let preparedState = state else { throw Failure("The incremental Codex backup state could not be prepared.") }
-                if now.timeIntervalSince(preparedState.baseCreatedAt) >= fullSnapshotInterval || preparedState.sequence >= maximumDeltaCount {
-                    created = try createFull(home: home, local: local, password: password, now: now)
-                } else {
-                    created = try createDelta(home: home, local: local, password: password,
-                                              now: now, previous: previous, state: preparedState)
-                    if created == nil {
-                        state = preparedState.replacingManifest(try manifest(home: home))
-                    }
-                }
-            } else {
-                created = try createFull(home: home, local: local, password: password, now: now)
+        if let previous, previous.version == 3, !needsSnapshot(receipt: previous, now: now, force: force) {
+            guard fm.fileExists(atPath: local.appendingPathComponent(previous.filename).path),
+                  fm.fileExists(atPath: cloud.appendingPathComponent(previous.filename).path) else {
+                throw Failure("A recovery kit copy is missing. Choose Back up Codex now to replace it.")
             }
+            return previous
         }
-        let receipt: Receipt
-        if let created {
-            receipt = created.receipt
-            state = created.state
-        } else if let previous, fm.fileExists(atPath: local.appendingPathComponent(previous.filename).path) {
-            receipt = previous
-        } else {
-            throw Failure("The last encrypted Codex snapshot is missing. Use Back up Codex now to create a replacement.")
-        }
-        // Publish only ciphertext. A failed copy never rotates the last good archives.
-        let source = local.appendingPathComponent(receipt.filename)
-        let destination = cloud.appendingPathComponent(receipt.filename)
-        try rejectRedirectedDestination(destination)
-        if try !fm.fileExists(atPath: destination.path) || sha256(destination) != receipt.sha256 {
-            let partial = cloud.appendingPathComponent(".\(UUID().uuidString).dmg.partial")
-            defer { try? fm.removeItem(at: partial) }
-            try fm.copyItem(at: source, to: partial)
-            guard try sha256(partial) == receipt.sha256 else { throw Failure("The encrypted iCloud copy failed verification. Previous snapshots were preserved.") }
-            if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
-            try fm.moveItem(at: partial, to: destination)
-        }
-        let data = try JSONEncoder().encode(receipt)
-        let chain = state.map { ChainIndex(version: 1, chainID: $0.chainID, artifacts: $0.artifacts) }
-            ?? ChainIndex(version: 1, chainID: receipt.chainID ?? UUID().uuidString, artifacts: [receipt.filename])
-        let chainData = try JSONEncoder().encode(chain)
-        for folder in [local, cloud] {
-            for name in ["Latest.json", "Chain.json", "RESTORE.md"] { try rejectRedirectedDestination(folder.appendingPathComponent(name)) }
-        }
-        try chainData.write(to: cloud.appendingPathComponent("Chain.json"), options: .atomic)
-        try data.write(to: cloud.appendingPathComponent("Latest.json"), options: .atomic)
-        try Data(restoreInstructions.utf8).write(to: cloud.appendingPathComponent("RESTORE.md"), options: .atomic)
-        try chainData.write(to: local.appendingPathComponent("Chain.json"), options: .atomic)
-        try data.write(to: local.appendingPathComponent("Latest.json"), options: .atomic)
-        try Data(restoreInstructions.utf8).write(to: local.appendingPathComponent("RESTORE.md"), options: .atomic)
-        if let state {
-            try writeState(state, home: home)
-            try prune(in: local, keeping: Set(state.artifacts))
-            try prune(in: cloud, keeping: Set(state.artifacts))
-        }
-        return receipt
-    }
-
-    private static func createFull(home: URL, local: URL, password: String, now: Date) throws -> CreatedBackup {
-        let fm = FileManager.default
-        let baselineManifest = try manifest(home: home)
         let staging = try makeStagingDirectory(home: home)
         defer { try? fm.removeItem(at: staging) }
         let payload = staging.appendingPathComponent("Recovery", isDirectory: true)
         try fm.createDirectory(at: payload, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let snapshot = try stage(home: home, destination: payload, now: now)
+        let manifest = try recoveryManifest(at: payload)
+        try JSONEncoder().encode(manifest).write(to: payload.appendingPathComponent("RecoveryManifest.json"), options: .atomic)
         try JSONEncoder().encode(snapshot).write(to: payload.appendingPathComponent("Snapshot.json"), options: .atomic)
         try Data(restoreInstructions.utf8).write(to: payload.appendingPathComponent("RESTORE.md"), options: .atomic)
         let stored = try encrypt(payload: payload, staging: staging, local: local, password: password, now: now)
-        let chainID = UUID().uuidString
-        let receipt = Receipt(version: 2, filename: stored.filename, createdAt: now, sha256: stored.digest,
+        let source = local.appendingPathComponent(stored.filename)
+        let destination = cloud.appendingPathComponent(stored.filename)
+        var published = false
+        defer {
+            if !published {
+                try? fm.removeItem(at: source)
+                try? fm.removeItem(at: destination)
+            }
+        }
+        let bytes = Int64(try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        guard bytes <= maximumImageBytes else { throw Failure("The encrypted recovery kit exceeded 512 MiB. Existing backups were preserved; review its source files.") }
+        let partial = cloud.appendingPathComponent(".\(UUID().uuidString).dmg.partial")
+        defer { try? fm.removeItem(at: partial) }
+        try fm.copyItem(at: source, to: partial)
+        guard try sha256(partial) == stored.digest else { throw Failure("The encrypted cloud-folder copy failed verification. Existing backups were preserved.") }
+        try fm.moveItem(at: partial, to: destination)
+        // A successful checksum alone is insufficient: unlock the cloud copy and rehearse a full restore.
+        try verifyRecoveryKit(destination, password: password, expected: manifest, staging: staging)
+        let receipt = Receipt(version: 3, filename: stored.filename, createdAt: now, sha256: stored.digest,
                               fileCount: snapshot.fileCount, databaseCount: snapshot.databaseCount,
-                              mode: "full", chainID: chainID, sequence: 0,
-                              baseFilename: stored.filename, previousFilename: nil)
-        let state = BackupState(version: 1, chainID: chainID, baseCreatedAt: now,
-                                latestFilename: stored.filename, sequence: 0,
-                                artifacts: [stored.filename], manifest: baselineManifest)
-        return CreatedBackup(receipt: receipt, state: state)
+                              mode: "recovery-kit", encryptedBytes: bytes, restoreVerifiedAt: Date())
+        let oldIndex = try recoveryIndex(in: local)
+        let retained = retainedKits(oldIndex.kits + [receipt])
+        let index = RecoveryIndex(version: 3, kits: retained)
+        // Publish both verified receipts before retiring any previous image or legacy chain.
+        for folder in [local, cloud] {
+            for name in ["RecoveryKits.json", "Latest.json", "RESTORE.md"] { try rejectRedirectedDestination(folder.appendingPathComponent(name)) }
+            try JSONEncoder().encode(index).write(to: folder.appendingPathComponent("RecoveryKits.json"), options: .atomic)
+            try JSONEncoder().encode(receipt).write(to: folder.appendingPathComponent("Latest.json"), options: .atomic)
+            try Data(restoreInstructions.utf8).write(to: folder.appendingPathComponent("RESTORE.md"), options: .atomic)
+        }
+        published = true
+        for folder in [local, cloud] {
+            try prune(in: folder, keeping: Set(retained.map(\.filename)))
+            let oldChain = folder.appendingPathComponent("Chain.json")
+            if fm.fileExists(atPath: oldChain.path) { try rejectRedirectedDestination(oldChain); try fm.removeItem(at: oldChain) }
+        }
+        let oldState = home.appendingPathComponent("Library/Application Support/ProjectPilot/CodexBackupState.json")
+        if fm.fileExists(atPath: oldState.path) { try rejectRedirectedDestination(oldState); try fm.removeItem(at: oldState) }
+        return receipt
     }
 
-    private static func createDelta(home: URL, local: URL, password: String, now: Date,
-                                    previous: Receipt, state: BackupState) throws -> CreatedBackup? {
-        let current = try manifest(home: home)
-        let changed = current.keys.filter { current[$0] != state.manifest[$0] }.sorted()
-        let deleted = state.manifest.keys.filter { current[$0] == nil }.sorted()
-        guard !changed.isEmpty || !deleted.isEmpty else { return nil }
+    static func recoveryIndex(in folder: URL) throws -> RecoveryIndex {
+        let url = folder.appendingPathComponent("RecoveryKits.json")
+        try rejectRedirectedDestination(url)
+        guard FileManager.default.fileExists(atPath: url.path) else { return RecoveryIndex(version: 3, kits: []) }
+        let index = try JSONDecoder().decode(RecoveryIndex.self, from: Data(contentsOf: url))
+        guard index.version == 3, index.kits.allSatisfy({ $0.version == 3 && isSnapshotFilename($0.filename) && $0.sha256.count == 64 && $0.restoreVerifiedAt != nil && ($0.encryptedBytes ?? 0) > 0 }) else {
+            throw Failure("The recovery kit index is invalid. Existing backups were preserved.")
+        }
+        return index
+    }
 
+    static func retainedKits(_ kits: [Receipt], budget: Int64 = maximumStoredBytes) -> [Receipt] {
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        var days = Set<Date>(), weeks = Set<Date>(), retained: [Receipt] = []
+        var total: Int64 = 0
+        for kit in kits.sorted(by: { $0.createdAt > $1.createdAt }) {
+            let day = calendar.startOfDay(for: kit.createdAt)
+            let week = calendar.dateInterval(of: .weekOfYear, for: kit.createdAt)!.start
+            guard !days.contains(day) else { continue }
+            let daily = days.count < 7
+            guard daily || (weeks.count < 2 && !weeks.contains(week)) else { continue }
+            let bytes = kit.encryptedBytes ?? maximumImageBytes
+            guard retained.isEmpty || total + bytes <= budget else { continue }
+            retained.append(kit); total += bytes; days.insert(day)
+            if !daily { weeks.insert(week) }
+        }
+        return retained
+    }
+
+    static func recoveryManifest(at root: URL) throws -> [String: RecoveryEntry] {
         let fm = FileManager.default
-        let staging = try makeStagingDirectory(home: home)
-        defer { try? fm.removeItem(at: staging) }
-        let payload = staging.appendingPathComponent("Recovery", isDirectory: true)
-        try fm.createDirectory(at: payload, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        let snapshot = try stageDelta(home: home, destination: payload, paths: changed, now: now)
-        let metadata = DeltaMetadata(version: 1, chainID: state.chainID, sequence: state.sequence + 1,
-                                     previousFilename: previous.filename, changedPaths: changed, deletedPaths: deleted)
-        try JSONEncoder().encode(metadata).write(to: payload.appendingPathComponent("Delta.json"), options: .atomic)
-        try JSONEncoder().encode(snapshot).write(to: payload.appendingPathComponent("Snapshot.json"), options: .atomic)
-        try Data(restoreInstructions.utf8).write(to: payload.appendingPathComponent("RESTORE.md"), options: .atomic)
-        let stored = try encrypt(payload: payload, staging: staging, local: local, password: password, now: now)
-        let receipt = Receipt(version: 2, filename: stored.filename, createdAt: now, sha256: stored.digest,
-                              fileCount: snapshot.fileCount, databaseCount: snapshot.databaseCount,
-                              mode: "delta", chainID: state.chainID, sequence: state.sequence + 1,
-                              baseFilename: state.artifacts.first, previousFilename: previous.filename)
-        let updated = BackupState(version: 1, chainID: state.chainID, baseCreatedAt: state.baseCreatedAt,
-                                  latestFilename: stored.filename, sequence: state.sequence + 1,
-                                  artifacts: state.artifacts + [stored.filename], manifest: current)
-        return CreatedBackup(receipt: receipt, state: updated)
+        var result: [String: RecoveryEntry] = [:]
+        func collect(_ url: URL, relative: String) throws {
+            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey, .isRegularFileKey])
+            if values.isSymbolicLink == true {
+                result[relative] = RecoveryEntry(kind: "symlink", digestOrTarget: try fm.destinationOfSymbolicLink(atPath: url.path))
+            } else if values.isDirectory == true {
+                result[relative] = RecoveryEntry(kind: "directory", digestOrTarget: "")
+                for child in try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+                    try collect(child, relative: relative + "/" + child.lastPathComponent)
+                }
+            } else if values.isRegularFile == true {
+                result[relative] = RecoveryEntry(kind: "file", digestOrTarget: try sha256(url))
+            } else { throw Failure("An unsupported file entered recovery staging.") }
+        }
+        for name in ["CodexHome", "AgentSkills"] {
+            let url = root.appendingPathComponent(name)
+            if fm.fileExists(atPath: url.path) { try collect(url, relative: name) }
+        }
+        return result
+    }
+
+    static func verifyRecoveryKit(_ image: URL, password: String, expected: [String: RecoveryEntry], staging: URL) throws {
+        let fm = FileManager.default
+        let mount = staging.appendingPathComponent("Mounted", isDirectory: true)
+        let restored = staging.appendingPathComponent("RestoreCheck", isDirectory: true)
+        try fm.createDirectory(at: mount, withIntermediateDirectories: false)
+        try fm.createDirectory(at: restored, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        _ = try ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "attach", image.path, "-readonly", "-nobrowse", "-mountpoint", mount.path, "-stdinpass"], timeoutSeconds: 120, standardInput: Data(password.utf8) + Data([0]))
+        do {
+            let stored = try JSONDecoder().decode([String: RecoveryEntry].self, from: Data(contentsOf: mount.appendingPathComponent("RecoveryManifest.json")))
+            guard stored == expected else { throw Failure("The recovery manifest did not match the staged files. Old backups were preserved.") }
+            for name in ["CodexHome", "AgentSkills"] where fm.fileExists(atPath: mount.appendingPathComponent(name).path) {
+                try fm.copyItem(at: mount.appendingPathComponent(name), to: restored.appendingPathComponent(name))
+            }
+            guard try recoveryManifest(at: restored) == expected else { throw Failure("The decrypted restore check did not match. Old backups were preserved.") }
+        } catch {
+            _ = try? ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "detach", mount.path], timeoutSeconds: 60)
+            throw error
+        }
+        _ = try ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "detach", mount.path], timeoutSeconds: 60)
     }
 
     private static func makeStagingDirectory(home: URL) throws -> URL {
@@ -311,7 +284,7 @@ nonisolated enum CodexCloudBackup {
                                                  timeoutSeconds: 600, standardInput: Data(password.utf8) + Data([0]))
     }
 
-    static func stage(home: URL, destination: URL, now: Date) throws -> Snapshot {
+    static func stage(home: URL, destination: URL, now: Date, maximumBytes: Int64 = maximumSourceBytes) throws -> Snapshot {
         let fm = FileManager.default, source = home.appendingPathComponent(".codex", isDirectory: true)
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: source.path, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -320,11 +293,12 @@ nonisolated enum CodexCloudBackup {
         guard source.resolvingSymlinksInPath() == source.standardizedFileURL else {
             throw Failure("The Codex source is a symbolic link. Review its backup location before continuing.")
         }
-        var snapshot = Snapshot(version: 1, startedAt: now)
+        var snapshot = Snapshot(version: 3, startedAt: now)
+        var sourceBytes: Int64 = 0
         let target = destination.appendingPathComponent("CodexHome", isDirectory: true)
         try fm.createDirectory(at: target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         func copy(_ from: URL, _ to: URL, parts: [String], filtering: Bool) throws {
-            let values = try from.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey])
+            let values = try from.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey])
             let directory = values.isDirectory == true && values.isSymbolicLink != true
             if values.isSymbolicLink == true, parts.count == 1, directories.contains(parts[0]) {
                 throw Failure("A Codex data library is a symbolic link. Review its target before backing it up.")
@@ -339,6 +313,8 @@ nonisolated enum CodexCloudBackup {
                 try fm.createSymbolicLink(atPath: to.path, withDestinationPath: fm.destinationOfSymbolicLink(atPath: from.path))
                 snapshot.fileCount += 1
             } else if values.isRegularFile == true {
+                sourceBytes += Int64(values.fileSize ?? 0)
+                guard sourceBytes <= maximumBytes else { throw Failure("Recovery essentials exceeded the 1 GiB source budget. Existing backups were preserved; review large worktree or skill files.") }
                 if ["sqlite", "sqlite3"].contains(from.pathExtension) || from.pathExtension == "db" && isSQLite(from) {
                     try snapshotDatabase(from: from, to: to)
                     snapshot.databaseCount += 1
@@ -358,117 +334,12 @@ nonisolated enum CodexCloudBackup {
             }
             try copy(agentSkills, destination.appendingPathComponent("AgentSkills"), parts: [], filtering: false)
         }
+        let stagedBytes = try FileManager.default.subpathsOfDirectory(atPath: destination.path).reduce(Int64(0)) { total, path in
+            let values = try destination.appendingPathComponent(path).resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+            return total + (values.isRegularFile == true && values.isSymbolicLink != true ? Int64(values.fileSize ?? 0) : 0)
+        }
+        guard stagedBytes <= maximumBytes else { throw Failure("The staged recovery kit exceeded its size budget. Existing backups were preserved.") }
         return snapshot
-    }
-
-    static func manifest(home: URL) throws -> [String: ManifestEntry] {
-        let fm = FileManager.default
-        let codex = home.appendingPathComponent(".codex", isDirectory: true)
-        var isDirectory: ObjCBool = false
-        guard fm.fileExists(atPath: codex.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw Failure("The Codex data folder was not found. Previous encrypted snapshots were preserved.")
-        }
-        guard codex.resolvingSymlinksInPath() == codex.standardizedFileURL else {
-            throw Failure("The Codex source is a symbolic link. Review its backup location before continuing.")
-        }
-        var result: [String: ManifestEntry] = [:]
-        func collect(_ url: URL, prefix: String, parts: [String], filtering: Bool) throws {
-            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey,
-                                                           .fileSizeKey, .contentModificationDateKey])
-            let directory = values.isDirectory == true && values.isSymbolicLink != true
-            if filtering && !shouldInclude(parts, isDirectory: directory) { return }
-            if values.isSymbolicLink == true, parts.count == 1, directories.contains(parts[0]) {
-                throw Failure("A Codex data library is a symbolic link. Review its target before backing it up.")
-            }
-            if directory {
-                for child in try fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
-                    .sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-                    try collect(child, prefix: prefix, parts: parts + [child.lastPathComponent], filtering: filtering)
-                }
-                return
-            }
-            guard values.isRegularFile == true || values.isSymbolicLink == true else { return }
-            let relative = ([prefix] + parts).joined(separator: "/")
-            let link = values.isSymbolicLink == true ? try fm.destinationOfSymbolicLink(atPath: url.path) : nil
-            result[relative] = ManifestEntry(kind: link == nil ? "file" : "symlink",
-                                             size: Int64(values.fileSize ?? 0),
-                                             modifiedAt: values.contentModificationDate ?? .distantPast,
-                                             linkDestination: link)
-        }
-        for child in try fm.contentsOfDirectory(at: codex, includingPropertiesForKeys: nil) {
-            try collect(child, prefix: "CodexHome", parts: [child.lastPathComponent], filtering: true)
-        }
-        let agentSkills = home.appendingPathComponent(".agents/skills", isDirectory: true)
-        if fm.fileExists(atPath: agentSkills.path) {
-            guard agentSkills.resolvingSymlinksInPath() == agentSkills.standardizedFileURL else {
-                throw Failure("The agent skills source is a symbolic link. Review its target before backing it up.")
-            }
-            for child in try fm.contentsOfDirectory(at: agentSkills, includingPropertiesForKeys: nil) {
-                try collect(child, prefix: "AgentSkills", parts: [child.lastPathComponent], filtering: false)
-            }
-        }
-        return result
-    }
-
-    static func stageDelta(home: URL, destination: URL, paths: [String], now: Date) throws -> Snapshot {
-        let fm = FileManager.default
-        var snapshot = Snapshot(version: 2, startedAt: now)
-        for relative in paths {
-            let components = relative.split(separator: "/").map(String.init)
-            guard let root = components.first, ["CodexHome", "AgentSkills"].contains(root), components.count > 1,
-                  !components.dropFirst().contains(where: { $0 == "." || $0 == ".." || $0.isEmpty }) else {
-                throw Failure("The incremental Codex backup contains an invalid path. Previous archives were preserved.")
-            }
-            let sourceRoot = root == "CodexHome" ? home.appendingPathComponent(".codex", isDirectory: true)
-                : home.appendingPathComponent(".agents/skills", isDirectory: true)
-            let source = components.dropFirst().reduce(sourceRoot) { $0.appendingPathComponent($1) }
-            let target = components.reduce(destination) { $0.appendingPathComponent($1) }
-            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
-                                   attributes: [.posixPermissions: 0o700])
-            let values = try source.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
-            if values.isSymbolicLink == true {
-                try fm.createSymbolicLink(atPath: target.path, withDestinationPath: fm.destinationOfSymbolicLink(atPath: source.path))
-                snapshot.fileCount += 1
-            } else if values.isRegularFile == true {
-                if ["sqlite", "sqlite3"].contains(source.pathExtension) || source.pathExtension == "db" && isSQLite(source) {
-                    try snapshotDatabase(from: source, to: target)
-                    snapshot.databaseCount += 1
-                } else if clonefile(source.path, target.path, 0) != 0 {
-                    try fm.copyItem(at: source, to: target)
-                }
-                snapshot.fileCount += 1
-            } else {
-                throw Failure("A file changed while the incremental Codex backup was being prepared. Previous archives were preserved; retry later.")
-            }
-        }
-        return snapshot
-    }
-
-    private static func loadState(home: URL, matching receipt: Receipt?) throws -> BackupState? {
-        let url = stateURL(home: home)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            if receipt?.version == 2 { throw Failure("The private incremental backup state is missing. Existing archives were preserved.") }
-            return nil
-        }
-        let state = try JSONDecoder().decode(BackupState.self, from: Data(contentsOf: url))
-        guard state.version == 1, let receipt,
-              state.latestFilename == receipt.filename, state.artifacts.last == receipt.filename,
-              state.artifacts.allSatisfy(isSnapshotFilename) else {
-            if receipt?.version == 2 { throw Failure("The private incremental backup state does not match the last archive. Existing archives were preserved.") }
-            return nil
-        }
-        return state
-    }
-
-    private static func writeState(_ state: BackupState, home: URL) throws {
-        let fm = FileManager.default
-        let url = stateURL(home: home)
-        try rejectRedirectedDestination(url.deletingLastPathComponent())
-        try rejectRedirectedDestination(url)
-        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
-                               attributes: [.posixPermissions: 0o700])
-        try JSONEncoder().encode(state).write(to: url, options: .atomic)
-        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private static func isSQLite(_ url: URL) -> Bool {
@@ -537,49 +408,44 @@ nonisolated enum CodexCloudBackup {
     }
 
     static let restoreInstructions = """
-    # Restore Codex from a ProjectPilot encrypted backup
+    # Restore the small encrypted Codex recovery kit
 
-    1. On the replacement Mac, open Chain.json in iCloud Drive > Development >
-       CodexBackups. Download every listed Codex-*.dmg in order plus this file.
-       Keep another untouched copy before doing recovery work.
-    2. Install Codex but quit it and all Codex CLI/background sessions. Keep any
-       fresh ~/.codex folder separately; do not merge into a running app.
-    3. Mount the first image and enter the recovery password saved separately in
-       your password manager or other safe place. ProjectPilot cannot recover a
-       forgotten password. Copy CodexHome and AgentSkills into a separate recovery
-       folder; do not edit the mounted image.
-    4. Mount each remaining image in Chain.json order. Read its encrypted Delta.json.
-       Remove each listed deleted path from the separate recovery folder, then overlay
-       that image's CodexHome and AgentSkills contents. Never apply a delta directly
-       to live Codex data.
-    5. After every delta is applied, move the recovered CodexHome to ~/.codex and
-       AgentSkills to ~/.agents/skills. Finder's Command-Shift-. shows hidden files.
-       Restore your Development repositories too. Worktrees may contain absolute
-       .git pointers: recover their changed files into restored repositories before
-       recreating worktree links. Symlink targets must be restored separately.
-    6. Reopen Codex, sign in again, and check familiar conversations, memories,
-       settings, skills, and task definitions. Review automation schedules before
-       enabling anything. Reinstall plugins. Restore outside-project credentials
-       and other applications through their own approved recovery methods.
-    7. In ProjectPilot > Backup, set up Codex backup with the SAME saved password.
-       Keep this password outside these archives and outside Git repositories.
+    Each version-3 recovery kit is independent. No baseline or delta chain is needed.
+    1. Download one Codex-*.dmg listed in RecoveryKits.json from iCloud Drive >
+       Development > CodexBackups. Keep an untouched copy and your separately saved
+       recovery password. ProjectPilot cannot recover a forgotten password.
+    2. Open the image with that password. Copy CodexHome and AgentSkills into a
+       separate recovery folder. Do not change the mounted image or live Codex data.
+    3. Install Codex, quit it and all CLI/background sessions, and preserve its fresh
+       data separately. Recover the selected CodexHome files under ~/.codex and
+       AgentSkills under ~/.agents/skills. Review config paths and automation
+       schedules before enabling them. Sign in again and reinstall plug-ins.
+    4. Restore Development repositories using their normal backups/Git. Recover
+       unpublished files from CodexHome/worktrees into those repositories before
+       deliberately reconnecting worktrees. Old .git pointers may have stale paths.
+       Symlinks are saved as links; their external targets need separate recovery.
+    5. Check instructions, skills, memories, automation definitions and recovered
+       source files. This kit does NOT restore full conversations, transcript or
+       history databases, attachments, generated images, dictation or caches.
 
-    Scope: config, global instructions, automations, rules, both skill libraries,
-    sessions and archived sessions, memories, attachments, generated images,
-    visualizations, local state databases, dictation history, and worktree files.
-    Excluded: auth.json and browser sign-ins, logs/caches, downloaded plugins,
-    old Codex backup folders, lock/socket files, database WAL/SHM sidecars, and
-    generated build/dependency folders inside worktrees and automations.
+    Scope: global instructions, config, local project preferences, rules, both skill
+    libraries, memories and memory databases, automation.toml definitions, and
+    non-generated worktree source, including unpublished files. No auth.json,
+    browser sign-ins, logs, downloaded plug-ins, generated dependencies or builds.
+    Application secrets outside these roots and the OS Keychain need their own plan.
 
-    SQLite databases use the online backup API and pass quick_check. Their WAL data
-    is included in each database snapshot. Separate files/databases are captured
-    over a time window, not as one atomic whole-app snapshot. Pending cross-file
-    activity at that time may require normal application recovery.
+    AES-256 encryption is required. Passwords never enter these files or command
+    arguments. SQLite uses a consistent read-only snapshot and quick_check.
+    Every kit is unlocked from the cloud-folder copy, restored to private temporary
+    storage and compared with its encrypted SHA-256 manifest before publication
+    or removal of older images. Nothing is restored into the live Codex folder.
 
-    The baseline and every delta are encrypted with AES-256 before entering
-    Development or iCloud. Backups run at most hourly automatically, or on Back up
-    Codex now. A new full baseline compacts the chain after 30 days or 120 deltas.
-    A copied and verified local iCloud file does not prove Apple's servers finished
-    upload. Check every Chain.json artifact from another device before erasing the Mac.
+    Daily automatic backups retain up to seven daily and two older weekly copies,
+    limited to 2 GiB per destination; newest copies take priority. A kit exceeding
+    1 GiB of source files or a 512 MiB encrypted image fails visibly without
+    discarding the previous recovery copy. Old baseline/delta chains are retired
+    only after the first recovery kit passes the full restore check and publication.
+    A verified local iCloud folder copy does NOT prove server upload completed.
+    Before erasing this Mac, download and unlock the kit from another device.
     """
 }

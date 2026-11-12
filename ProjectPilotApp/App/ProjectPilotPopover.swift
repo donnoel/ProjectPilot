@@ -377,20 +377,20 @@ struct ProjectPilotPopover: View {
 
     private var backupSections: some View {
         VStack(alignment: .leading, spacing: 10) {
-            section("Encrypted Codex Backup") {
+            section("Encrypted Codex Recovery Kit") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(vm.codexBackupMessage)
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityLabel("Codex backup status: \(vm.codexBackupMessage)")
-                    Text("Runs hourly • One baseline plus encrypted changes")
+                    Text("Runs daily • Up to 7 daily and 2 weekly kits")
                         .font(.caption).foregroundStyle(.secondary)
                     if let date = vm.codexBackupLastCopiedAt {
                         Text("Verified: \(date.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption)
                     }
                     if vm.isBackingUpCodex {
-                        ProgressView("Encrypting changed Codex data…").controlSize(.small)
+                        ProgressView("Encrypting and restore-checking…").controlSize(.small)
                     } else if vm.codexBackupConfigured {
                         Button("Back up Codex now") { vm.backUpCodexNow() }
                             .disabled(vm.isSyncingDevelopmentBackup)

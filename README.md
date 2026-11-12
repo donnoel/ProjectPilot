@@ -118,19 +118,22 @@ continues alongside the encrypted Codex recovery backup below.
 
 ### Encrypted Codex recovery backup
 
-The Backup tab can also protect important `~/.codex` data in AES-256 encrypted
-disk images, including conversation history, memories, settings, automations,
-skills, attachments, and unpublished worktree files. SQLite databases are captured
-with the online backup API and checked for integrity.
+The Backup tab protects the Codex working setup in daily, independent AES-256
+recovery kits: instructions, settings, skills, memories, automation definitions,
+and unpublished worktree source. Full conversations, large history databases,
+generated media, automation run artifacts and caches are excluded.
 
-Choose **Set up encrypted backup**, save a recovery password independently of this
-Mac, and confirm it in ProjectPilot. The local Keychain copy enables an encrypted
-baseline followed by hourly delta images containing only changed files and deletion
-metadata. A new full baseline compacts the chain after 30 days or 120 deltas.
-Encrypted images and restore instructions live in `~/Development/CodexBackups`
-and the matching iCloud folder.
-Credentials, browser state, caches, downloaded plugins, and generated dependencies
-are excluded. A verified local iCloud copy does not prove server upload completed.
+Choose **Set up encrypted backup**, save the recovery password independently of
+this Mac, and confirm it in ProjectPilot. Existing installations keep their saved
+password. Kits and self-contained restore instructions live in
+`~/Development/CodexBackups` and the matching iCloud folder. Retention is up to
+seven daily and two older weekly kits, bounded to 2 GiB per destination. Source
+and encrypted-image size limits fail visibly rather than silently omitting files.
+
+Every new kit is encrypted, copied, unlocked and restored to private temporary
+storage, with all restored files checked against the encrypted checksum manifest.
+Only then are old kits or legacy chains retired. A verified local iCloud copy does
+not prove server upload completed. No verification restores into live Codex data.
 
 See [Codex backup and restore](docs/CODEX_BACKUP.md) for the exact scope, password
 requirements, storage/retention behavior, and replacement-Mac recovery steps.

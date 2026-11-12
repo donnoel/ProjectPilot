@@ -1,117 +1,131 @@
-# Encrypted Codex recovery backups
+# Small encrypted Codex recovery kits
 
-ProjectPilot creates an AES-256 encrypted baseline of important local Codex data,
-then small encrypted delta disk images containing only changed files and deletion
-metadata. This supplements the Development mirror and existing readable skills
-copies; it does not encrypt the entire Development folder.
+ProjectPilot backs up the essentials needed to rebuild Don's Codex working setup.
+Each AES-256 disk image is a complete, independent recovery kit. Full chat history
+is deliberately excluded. This supplements the normal Development mirror and
+readable skills backup; it does not encrypt or replace them.
 
-## Enable the backup
+## Schedule, retention and size limits
 
-1. Open ProjectPilot's **Backup** tab and choose **Set up encrypted backup**.
-2. Choose a unique password of at least 16 characters. Save it in a password
-   manager you can open on a replacement Mac, or another independent safe place.
-3. Confirm the password and acknowledge that you saved it, then enable the backup.
+- Automatic backups run at most daily while ProjectPilot is running. A version-1
+  or version-2 legacy receipt triggers migration immediately, even when recent.
+- **Back up Codex now** creates a fresh kit immediately. **Back up now** also
+  attempts the kit before the normal Development mirror. The writers serialize.
+- Retain at most one kit per UTC day for seven distinct days, plus two older
+  weekly copies, subject to a 2 GiB budget per destination. Newest copies win;
+  the budget can shorten the recovery window. Each retained kit stands alone.
+- The source budget is 1 GiB and the encrypted-image limit is 512 MiB. Exceeding
+  either fails visibly and preserves the previous backup; files are not silently
+  omitted to meet a limit. Review large worktree/skill files before retrying.
+- Failed automatic attempts retry after 15 minutes. Health warns after 48 hours
+  without a recorded verified kit or immediately on a reported backup error.
 
-ProjectPilot stores a local, device-only Keychain item for automatic backups. The
-password is not written to UserDefaults, Git, process arguments, recovery images,
-or the cloud folder. The app cannot recover a forgotten password. The password
-must survive loss of the original Mac independently of its local Keychain.
-
-The first baseline starts after any current Development backup finishes. Later
-automatic backups run at most hourly while ProjectPilot is running and add only
-files whose size, modification time, type, or symlink target changed. **Back up
-Codex now** checks immediately but creates no image when nothing changed. The
-existing **Back up now** also attempts a Codex update before the Development
-mirror. Failures wait 15 minutes before an automatic retry. The two backup
-operations do not run concurrently.
-
-## Locations and recovery window
-
-- Encrypted local copies: `~/Development/CodexBackups/`.
-- Cloud destination: iCloud Drive → `Development/CodexBackups/`.
-- Private temporary staging: `~/Library/Application Support/ProjectPilot/CodexBackupStaging/`.
-
-Each encrypted artifact has a unique `Codex-<UTC timestamp>-<UUID>.dmg` name.
-`Chain.json` lists the required baseline and deltas in restore order. `Latest.json`
-records the last artifact's timestamp and ciphertext SHA-256, and `RESTORE.md`
-accompanies the chain. Only ciphertext and these non-secret instructions and
-summary metadata enter Development or iCloud. The private per-file manifest stays
-under `~/Library/Application Support/ProjectPilot` with mode 0600 permissions.
-Private staging is removed after success or failure; a later run removes this
-service's abandoned UUID staging directories under an exclusive process lock.
-
-A new full baseline compacts the chain after 30 days or 120 deltas. The previous
-chain is removed only after the replacement baseline is encrypted, verified, and
-copied successfully. Migrating from the original full-snapshot format adopts the
-newest verified image as the baseline and removes redundant older images only after
-the first incremental publication succeeds. Backups need temporary space only for
-changed files, database snapshots, and the compressed delta during normal runs.
-
-## Included and excluded data
+## What is protected
 
 Included:
 
-- Global `AGENTS.md`, `config.toml`, local app/project state, history and session index.
-- Sessions, archived sessions, memories and memory databases.
-- Automation definitions and their non-generated files, rules, and both skill libraries.
-- Attachments, generated images, visualizations, and dictation history.
-- Local SQLite state databases and worktree source files, including unpublished files.
+- Global `AGENTS.md`, optional `AGENTS.override.md`, `config.toml`, and local
+  project preferences in `.codex-global-state.json`.
+- Both skill libraries, rules, text memories and memory databases.
+- `automation.toml` definitions; schedules must be reviewed before re-enabling.
+- Non-generated source under `.codex/worktrees`, including unpublished files.
+  Files must still be recovered into their repositories; Git pointer paths may
+  be stale on another Mac.
 
 Excluded:
 
-- `auth.json`, browser sign-ins, logs, caches, downloaded plugins, and old Codex backups.
-- Lock/socket files and database WAL/SHM sidecars.
-- Generated dependencies/build folders inside automations and worktrees, and
-  worktree `.git` directories (worktree `.git` pointer files are retained).
+- Sessions, archived sessions, the large thread-history database, other runtime
+  databases, transcript/history indexes, attachments, generated images,
+  visualizations and dictation recordings/history.
+- Automation run artifacts, evidence folders, logs and caches.
+- `auth.json`, browser sign-ins, downloaded plug-ins and previous backups.
+- Generated worktree dependencies/builds, lock files, database WAL/SHM sidecars
+  and worktree `.git` directories. Worktree `.git` pointer files are retained.
 
-Other application secrets and settings, OS Keychain recovery, and files outside
-these selected roots need their own recovery plan. Symlinks inside the snapshot
-are preserved rather than followed; restore their external targets separately.
-A symlink replacing a selected source root or backup destination stops the backup
-for review rather than silently copying another location.
+This is a setup-and-source recovery kit, not a full conversation-history backup.
+Saving decisions and important results in the Documentation library remains useful.
+Normal Development files and application credentials outside these roots require
+separate recovery. Symlinks are preserved as links; external targets are not copied.
 
-## Database consistency and verification
+## Password and destinations
 
-SQLite uses its read-only online backup API into a new private file, including
-committed WAL contents. Each destination passes `PRAGMA quick_check`. A read
-transaction fixes the source view while WAL writers continue. A busy, corrupt,
-or inaccessible database fails the new snapshot without rotating old archives.
-Separate databases and other files are captured over a time window, not as a
-single atomic snapshot of every Codex component.
+Set up a unique password of at least 16 characters in ProjectPilot's Backup tab,
+acknowledge saving it in an independent password manager, and keep that recovery
+password accessible after losing this Mac. Existing installations reuse their
+saved password. Never send it through chat or put it beside the images.
 
-The disk image is checked for encryption and its internal checksum is verified
-with the password. The encrypted cloud-folder copy must match the ciphertext
-SHA-256 before its receipt is published and old snapshots are rotated.
+The automatic password copy is stored only in the local device-only Keychain.
+It is never placed in process arguments, UserDefaults, logs, Git, recovery files,
+or the iCloud destination. Encryption failure has no plaintext fallback.
 
-**Verified in the local iCloud folder does not prove Apple's upload completed.**
-Before erasing the original Mac, confirm iCloud finished synchronization and that
-you can download and unlock a complete image from another device. System Health
-reports an unconfigured, failed, or stale Codex backup as needing attention.
+- Local: `~/Development/CodexBackups/`.
+- Cloud folder: iCloud Drive > `Development/CodexBackups/`.
+- Private staging: `~/Library/Application Support/ProjectPilot/CodexBackupStaging/`.
 
-## Restore on a replacement Mac
+`RecoveryKits.json` lists independent version-3 receipts. `Latest.json` records the
+newest kit's timestamp, ciphertext SHA-256, file/database counts, encrypted size
+and restore-check time. Metadata contains no source-file manifest or password.
+The per-file SHA-256 manifest is inside the encrypted image. `RESTORE.md` accompanies
+the images and is also inside each kit. Plaintext staging is private and removed
+on completion or failure under the exclusive backup lock.
 
-1. Download every image listed in `Chain.json` plus `RESTORE.md` from iCloud. Keep
-   an untouched copy. Mount the first image with the separately saved password.
-2. Install Codex, then quit it and all Codex CLI/background sessions before copying
-   data. Preserve any newer `~/.codex` folder rather than merging live databases.
-3. Copy **CodexHome** and **AgentSkills** from the first image into a separate
-   recovery folder. Mount each remaining image in `Chain.json` order. For every
-   delta, apply the encrypted `Delta.json` deletion list inside that recovery folder,
-   then overlay its CodexHome and AgentSkills contents. Never edit mounted images.
-4. After all deltas are applied, move the recovered CodexHome to `~/.codex` and
-   AgentSkills to `~/.agents/skills`. Finder's **Command-Shift-.** shows hidden files.
-5. Restore Development repositories too. Worktree `.git` pointers can contain old
-   absolute paths: recover changed source files first, then reconnect/recreate the
-   worktrees deliberately. Do not assume their Git links are already usable.
-6. Reopen Codex, sign in again, reinstall plugins, and verify familiar conversations,
-   memories, settings, skills, and automation definitions. Review schedules before
-   enabling tasks. Restoring files is not proof that every app feature works.
-7. Set up ProjectPilot's encrypted backup with the same saved password. Existing
-   images are verified before storing a replacement local Keychain item.
+## Verification and migration safety
 
-The archive's own `RESTORE.md` is self-contained so recovery does not require this
-repository or a working ProjectPilot installation. Never put the password next to
-the archives or into a Git repository.
+1. Snapshot selected SQLite databases using the read-only online backup API;
+   include committed WAL data and require `PRAGMA quick_check` to pass.
+2. Encrypt the kit with AES-256 and verify the disk-image encryption/checksum.
+3. Copy ciphertext to the iCloud folder and compare its SHA-256.
+4. Unlock that cloud-folder image read-only using the password over private stdin.
+5. Copy its recovery roots to private temporary storage and compare every restored
+   file, directory and symlink with the original encrypted manifest.
+6. Detach the image and publish both new receipts and the independent-kit index.
+7. Only then prune expired kits and retire owned legacy baseline/delta images,
+   `Chain.json`, and the obsolete private incremental state.
 
-Implementation references: [SQLite online backup API](https://sqlite.org/backup.html)
-and Apple's built-in `hdiutil` manual for AES-256 disk images and private stdin input.
+A preparation, encryption, copy or restore-check failure preserves the old chain.
+Nothing is restored into the live `.codex` folder during verification. Separate
+source files/databases are captured across a time window, not atomically as a
+whole app. This rehearsal proves the copied kit can be decrypted and restored;
+it does not prove every Codex feature works on a replacement Mac.
+
+**Local iCloud-folder verification is not proof of server upload.** Before erasing
+this Mac, verify sync completed and download/unlock a kit from another device.
+
+## Restore
+
+1. Download one listed kit and keep an untouched copy. Mount it with the separately
+   saved recovery password. No other kit or legacy chain is required.
+2. Copy `CodexHome` and `AgentSkills` into a separate recovery folder. Keep the
+   mounted image unchanged. `RecoveryManifest.json` contains the encrypted hashes.
+3. Install Codex, quit it and every CLI/background session, and preserve the fresh
+   data separately. Recover the selected files into `~/.codex` and skills into
+   `~/.agents/skills`. Review configuration paths, links and schedules first.
+4. Restore Development repositories through their normal backup/Git process.
+   Recover unpublished worktree source before deliberately recreating Git links.
+5. Sign in again, reinstall plug-ins, check instructions/skills/memories/source,
+   and re-enable only the tasks you still want. Full old conversations are not
+   part of this recovery. Reconfigure ProjectPilot using the saved password.
+
+The image's `RESTORE.md` is self-contained. Implementation references:
+[SQLite backup API](https://sqlite.org/backup.html) and the installed `hdiutil` manual.
+
+## Observed verification - November 12, 2026
+
+Signed build 7 was installed and launched on Don's Mac with its existing signing
+identity and entitlements preserved. All 14 focused backup tests passed, including
+wrong-password/manifest rejection, independent restores, daily scheduling, size
+limits, retention and preservation of the legacy chain on failure. The signed
+build passed with warnings treated as errors.
+
+The real-data run produced one 215,537,664-byte encrypted recovery kit containing
+5,751 files and two memory-database snapshots. Its iCloud-folder copy was decrypted
+and restored into private temporary storage, and all restored entries matched the
+encrypted manifest before receipts were published. Independent post-run checks
+confirmed matching ciphertext SHA-256 and receipts in both locations, no remaining
+legacy chain images/index/state, and no abandoned plaintext staging. The nine-image
+legacy chain had totaled 20.307 GB per destination; the replacement is about 216 MB.
+
+This is a real local restore rehearsal, not a replacement-Mac or server-download
+test. iCloud server upload and manual visual acceptance were not independently
+verified. The prior build was retained locally for app rollback; conversation
+history remains in the live Codex source but is no longer protected by these kits.

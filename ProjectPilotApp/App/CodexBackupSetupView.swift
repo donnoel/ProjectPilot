@@ -11,8 +11,8 @@ struct CodexBackupSetupView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Protect your Codex data").font(.title2.bold())
-            Text("Choose a recovery password of at least 16 characters. Save it in a password manager you can access on a replacement Mac.")
+            Text("Protect your Codex setup").font(.title2.bold())
+            Text("This backs up instructions, skills, memories and unpublished worktree source, not full chat history. Choose a recovery password of at least 16 characters. Save it in a password manager you can access on a replacement Mac.")
                 .fixedSize(horizontal: false, vertical: true)
             SecureField("Backup password", text: $password)
                 .textContentType(.newPassword)

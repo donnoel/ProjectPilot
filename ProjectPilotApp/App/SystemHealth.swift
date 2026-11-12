@@ -49,7 +49,7 @@ nonisolated enum SystemHealthChecker {
         let detail: String
         if let error { detail = error }
         else if !configured { detail = "Open Backup and set a recovery password to enable encrypted Codex backups." }
-        else if let lastCopiedAt, now.timeIntervalSince(lastCopiedAt) < 24 * 60 * 60 { return nil }
+        else if let lastCopiedAt, now.timeIntervalSince(lastCopiedAt) < 48 * 60 * 60 { return nil }
         else { detail = "No recent verified encrypted Codex backup check is recorded. Open Backup to check or retry." }
         return SystemHealthWarning(kind: .backup, severity: .warning, title: "Codex backup needs attention", detail: detail)
     }

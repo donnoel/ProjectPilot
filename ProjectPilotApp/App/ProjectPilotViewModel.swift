@@ -658,7 +658,7 @@ final class ProjectPilotViewModel: ObservableObject {
         codexBackupConfigured = true
         nextCodexBackupAttempt = .distantPast
         codexBackupError = nil
-        codexBackupMessage = "Password saved. The first encrypted baseline will start after any current backup finishes."
+        codexBackupMessage = "Password saved. The first encrypted recovery kit will start after any current backup finishes."
         backUpCodexNow()
     }
 
@@ -679,16 +679,14 @@ final class ProjectPilotViewModel: ObservableObject {
             codexBackupConfigured = true
             isBackingUpCodex = true
             codexBackupError = nil
-            codexBackupMessage = "Preparing and verifying an encrypted Codex backup. Only changed files are added after the baseline."
+            codexBackupMessage = "Preparing an encrypted recovery kit and checking a temporary restore."
             defer { isBackingUpCodex = false }
             let home = FileManager.default.homeDirectoryForCurrentUser
             let receipt = try await Task.detached(priority: .utility) {
                 try CodexCloudBackup.createAndCopy(home: home, password: password, force: force)
             }.value
-            codexBackupLastCopiedAt = Date()
-            codexBackupMessage = receipt.mode == "delta"
-                ? "Encrypted incremental update verified in the local iCloud folder. iCloud upload may still be pending."
-                : "Encrypted baseline verified in the local iCloud folder. iCloud upload may still be pending."
+            codexBackupLastCopiedAt = receipt.createdAt
+            codexBackupMessage = "Recovery kit decrypted and restore-checked in the local iCloud folder. Full chat history is excluded; iCloud upload may still be pending."
             nextCodexBackupAttempt = Date().addingTimeInterval(CodexCloudBackup.interval)
         } catch {
             codexBackupError = error.localizedDescription

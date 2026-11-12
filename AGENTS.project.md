@@ -38,14 +38,14 @@ voice memos and Auto Tick configuration stay in Tick.
 
 ## Codex backup contract
 
-- `CodexCloudBackup` captures selected Codex data into AES-256 encrypted disk images.
+- `CodexCloudBackup` creates daily independent AES-256 recovery kits for setup, skills, memories, task definitions and unpublished worktree source; full chat history is excluded.
   Read `docs/CODEX_BACKUP.md` before changing its scope, encryption, retention, or
   restore behavior. The existing readable skills mirror remains separate.
 - Preserve password recovery acknowledgment and device-only Keychain storage.
   Never put passwords into process arguments, logs, archives, UserDefaults, Git,
   or the cloud folder. No plaintext fallback on encryption failure.
 - Use consistent SQLite snapshots and integrity checks, serialize backup writers,
-  verify ciphertext before rotation, and preserve the last good archive on failure.
+  verify ciphertext and a decrypted temporary restore before rotation or legacy-chain retirement, enforce source/image/retention budgets, and preserve the last good archive on failure.
 - Label the local iCloud copy separately from confirmed server upload. Fixture
   restore tests do not establish a successful rebuild of the user's real Mac.
 

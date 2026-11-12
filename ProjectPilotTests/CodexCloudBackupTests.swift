@@ -6,11 +6,11 @@ import Testing
 @Suite(.serialized)
 struct CodexCloudBackupTests {
     @Test func selectsRecoveryDataWithoutCredentialsCachesOrGeneratedDependencies() {
-        for path in ["AGENTS.md", "config.toml", "state_5.sqlite", "thread_history_1.sqlite", "memories_v2_1.sqlite",
-                     "sessions/2026/rollout.jsonl", "skills/example/build/reference.md", "worktrees/example/App.swift"] {
+        for path in ["AGENTS.md", "config.toml", "memories_1.sqlite", "memories_v2_1.sqlite",
+                     "automations/example/automation.toml", "skills/example/build/reference.md", "worktrees/example/App.swift"] {
             #expect(CodexCloudBackup.shouldInclude(path.components(separatedBy: "/"), isDirectory: false))
         }
-        for path in ["auth.json", "logs_2.sqlite", "sqlite/logs_2.sqlite", "sqlite/state.sqlite3-journal", "state_5.sqlite-wal", "state_5.sqlite-shm", "plugins", "backups", "browser",
+        for path in ["sessions/one.jsonl", "archived_sessions/old.jsonl", "thread_history_1.sqlite", "state_5.sqlite", "automations/example/evidence/file.json", "generated_images/image.png", "auth.json", "logs_2.sqlite", "sqlite/logs_2.sqlite", "sqlite/state.sqlite3-journal", "state_5.sqlite-wal", "state_5.sqlite-shm", "plugins", "backups", "browser",
                      "worktrees/example/node_modules/code.js", "automations/example/.venv/file", "sqlite/state.db-wal"] {
             #expect(!CodexCloudBackup.shouldInclude(path.components(separatedBy: "/"), isDirectory: ["plugins", "backups", "browser"].contains(path)))
         }
@@ -146,6 +146,10 @@ struct CodexCloudBackupTests {
         #expect(try CodexCloudBackup.sha256(image) == receipt.sha256)
         #expect(try CodexCloudBackup.latestReceipt(in: cloud) == receipt)
         #expect(throws: (any Error).self) { try CodexCloudBackup.verifyImage(image, password: "wrong fixture password") }
+        let verification = home.appendingPathComponent("WrongManifestCheck")
+        try FileManager.default.createDirectory(at: verification, withIntermediateDirectories: true)
+        #expect(throws: (any Error).self) { try CodexCloudBackup.verifyRecoveryKit(image, password: password, expected: [:], staging: verification) }
+        #expect(try CodexCloudBackup.latestReceipt(in: cloud) == receipt)
         let mount = home.appendingPathComponent("Mounted")
         try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
         _ = try ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "attach", image.path, "-readonly", "-nobrowse", "-mountpoint", mount.path, "-stdinpass"], timeoutSeconds: 60, standardInput: Data(password.utf8) + Data([0]))
@@ -154,99 +158,95 @@ struct CodexCloudBackupTests {
         #expect(!FileManager.default.fileExists(atPath: mount.appendingPathComponent("CodexHome/auth.json").path))
         #expect(FileManager.default.fileExists(atPath: mount.appendingPathComponent("RESTORE.md").path))
         // A bad live database must not replace the last successfully copied snapshot.
-        try write("invalid SQLite", home, ".codex/state_5.sqlite")
+        try write("invalid SQLite", home, ".codex/memories_1.sqlite")
         #expect(throws: (any Error).self) { try CodexCloudBackup.createAndCopy(home: home, password: password, force: true) }
         #expect(try CodexCloudBackup.latestReceipt(in: cloud) == receipt)
         #expect(try CodexCloudBackup.sha256(image) == receipt.sha256)
         #expect(try FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent("Library/Application Support/ProjectPilot/CodexBackupStaging").path) == ["backup.lock"])
         for path in ["Development/CodexBackups", "Library/Mobile Documents/com~apple~CloudDocs/Development/CodexBackups"] {
             let names = try FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(path).path)
-            #expect(names.allSatisfy { CodexCloudBackup.isSnapshotFilename($0) || ["Latest.json", "Chain.json", "RESTORE.md"].contains($0) })
+            #expect(names.allSatisfy { CodexCloudBackup.isSnapshotFilename($0) || ["Latest.json", "RecoveryKits.json", "RESTORE.md"].contains($0) })
         }
     }
 
-    @Test func laterBackupsContainOnlyChangesAndDeletionMetadata() throws {
+    @Test func recoveryKitsAreIndependentAndDaily() throws {
         let home = try fixtureHome()
         defer { try? FileManager.default.removeItem(at: home) }
         try write("initial settings", home, ".codex/config.toml")
-        try write("unchanged history", home, ".codex/sessions/large-history.jsonl")
+        try write("must stay out", home, ".codex/sessions/large-history.jsonl")
         let password = "Fixture-only-password-2026"
-        let first = try CodexCloudBackup.createAndCopy(home: home, password: password, force: true,
-                                                       now: Date(timeIntervalSince1970: 1_800_000_000))
-        #expect(first.mode == "full")
-        let unchanged = try CodexCloudBackup.createAndCopy(home: home, password: password, force: true,
-                                                           now: Date(timeIntervalSince1970: 1_800_001_800))
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = try CodexCloudBackup.createAndCopy(home: home, password: password, force: true, now: now)
+        #expect(first.version == 3 && first.mode == "recovery-kit")
+        #expect(first.restoreVerifiedAt != nil)
+        let unchanged = try CodexCloudBackup.createAndCopy(home: home, password: password, force: false, now: now.addingTimeInterval(3600))
         #expect(unchanged == first)
-        #expect(try FileManager.default.contentsOfDirectory(at: CodexCloudBackup.localFolder(home: home),
-                                                            includingPropertiesForKeys: nil)
-            .filter { CodexCloudBackup.isSnapshotFilename($0.lastPathComponent) }.count == 1)
-
         try write("changed settings", home, ".codex/config.toml")
-        let second = try CodexCloudBackup.createAndCopy(home: home, password: password, force: true,
-                                                        now: Date(timeIntervalSince1970: 1_800_003_600))
-        #expect(second.mode == "delta")
-        #expect(second.baseFilename == first.filename)
-        #expect(second.previousFilename == first.filename)
+        try write("unpublished", home, ".codex/worktrees/demo/new.swift")
+        let second = try CodexCloudBackup.createAndCopy(home: home, password: password, force: false, now: now.addingTimeInterval(86401))
+        #expect(second.version == 3 && second.previousFilename == nil && second.baseFilename == nil)
         let cloud = CodexCloudBackup.cloudFolder(home: home)
-        let mount = home.appendingPathComponent("DeltaMount")
+        let expected = try CodexCloudBackup.recoveryManifest(at: home.appendingPathComponent("expected"))
+        #expect(expected.isEmpty)
+        let mount = home.appendingPathComponent("MountedKit")
         try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
-        _ = try ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "attach", cloud.appendingPathComponent(second.filename).path,
-                                                   "-readonly", "-nobrowse", "-mountpoint", mount.path, "-stdinpass"],
-                                                  timeoutSeconds: 60, standardInput: Data(password.utf8) + Data([0]))
+        _ = try ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "attach", cloud.appendingPathComponent(second.filename).path, "-readonly", "-nobrowse", "-mountpoint", mount.path, "-stdinpass"], timeoutSeconds: 60, standardInput: Data(password.utf8) + Data([0]))
+        defer { _ = try? ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "detach", mount.path], timeoutSeconds: 30) }
         #expect(try String(contentsOf: mount.appendingPathComponent("CodexHome/config.toml"), encoding: .utf8) == "changed settings")
-        #expect(!FileManager.default.fileExists(atPath: mount.appendingPathComponent("CodexHome/sessions/large-history.jsonl").path))
-        let metadata = try JSONDecoder().decode(CodexCloudBackup.DeltaMetadata.self,
-                                                from: Data(contentsOf: mount.appendingPathComponent("Delta.json")))
-        #expect(metadata.changedPaths == ["CodexHome/config.toml"])
-        #expect(metadata.deletedPaths.isEmpty)
-        _ = try ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "detach", mount.path], timeoutSeconds: 30)
-
-        try FileManager.default.removeItem(at: home.appendingPathComponent(".codex/config.toml"))
-        let third = try CodexCloudBackup.createAndCopy(home: home, password: password, force: true,
-                                                       now: Date(timeIntervalSince1970: 1_800_007_200))
-        #expect(third.mode == "delta")
-        _ = try ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "attach", cloud.appendingPathComponent(third.filename).path,
-                                                   "-readonly", "-nobrowse", "-mountpoint", mount.path, "-stdinpass"],
-                                                  timeoutSeconds: 60, standardInput: Data(password.utf8) + Data([0]))
-        let deletion = try JSONDecoder().decode(CodexCloudBackup.DeltaMetadata.self,
-                                                from: Data(contentsOf: mount.appendingPathComponent("Delta.json")))
-        #expect(deletion.changedPaths.isEmpty)
-        #expect(deletion.deletedPaths == ["CodexHome/config.toml"])
-        _ = try ProjectPilotViewModel.runProcess(["/usr/bin/hdiutil", "detach", mount.path], timeoutSeconds: 30)
-        let chain = try JSONDecoder().decode(CodexCloudBackup.ChainIndex.self,
-                                             from: Data(contentsOf: cloud.appendingPathComponent("Chain.json")))
-        #expect(chain.artifacts == [first.filename, second.filename, third.filename])
+        #expect(try String(contentsOf: mount.appendingPathComponent("CodexHome/worktrees/demo/new.swift"), encoding: .utf8) == "unpublished")
+        #expect(!FileManager.default.fileExists(atPath: mount.appendingPathComponent("CodexHome/sessions").path))
+        #expect(!FileManager.default.fileExists(atPath: cloud.appendingPathComponent("Chain.json").path))
     }
 
-    @Test func legacyFullSnapshotsMigrateWithoutCreatingAnotherFullImage() throws {
+    @Test func legacyChainIsPreservedOnFailureAndRetiredOnlyAfterRestoreCheckedKit() throws {
         let home = try fixtureHome()
         defer { try? FileManager.default.removeItem(at: home) }
-        try write("baseline", home, ".codex/config.toml")
-        let password = "Fixture-only-password-2026"
-        let baseline = try CodexCloudBackup.createAndCopy(home: home, password: password, force: true)
-        let legacy = CodexCloudBackup.Receipt(version: 1, filename: baseline.filename,
-                                              createdAt: baseline.createdAt, sha256: baseline.sha256,
-                                              fileCount: baseline.fileCount, databaseCount: baseline.databaseCount)
-        let local = CodexCloudBackup.localFolder(home: home)
-        let cloud = CodexCloudBackup.cloudFolder(home: home)
+        let local = CodexCloudBackup.localFolder(home: home), cloud = CodexCloudBackup.cloudFolder(home: home)
+        let name = "Codex-20260101T000000Z-\(UUID().uuidString).dmg"
+        let receipt = CodexCloudBackup.Receipt(version: 2, filename: name, createdAt: Date(), sha256: String(repeating: "a", count: 64), fileCount: 100, databaseCount: 2)
         for folder in [local, cloud] {
-            try JSONEncoder().encode(legacy).write(to: folder.appendingPathComponent("Latest.json"), options: .atomic)
-            try Data("obsolete".utf8).write(to: folder.appendingPathComponent("Codex-20260101T000000Z-\(UUID().uuidString).dmg"))
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data("legacy encrypted fixture".utf8).write(to: folder.appendingPathComponent(name))
+            try JSONEncoder().encode(receipt).write(to: folder.appendingPathComponent("Latest.json"))
+            try Data("legacy chain".utf8).write(to: folder.appendingPathComponent("Chain.json"))
         }
-        try FileManager.default.removeItem(at: CodexCloudBackup.stateURL(home: home))
-        try write("changed after baseline", home, ".codex/config.toml")
-        let migrated = try CodexCloudBackup.createAndCopy(home: home, password: password, force: true,
-                                                          now: baseline.createdAt.addingTimeInterval(3_600))
-        #expect(migrated.mode == "delta")
-        let chain = try JSONDecoder().decode(CodexCloudBackup.ChainIndex.self,
-                                             from: Data(contentsOf: cloud.appendingPathComponent("Chain.json")))
-        #expect(chain.artifacts == [baseline.filename, migrated.filename])
+        try write("bad database", home, ".codex/memories_1.sqlite")
+        #expect(throws: (any Error).self) { try CodexCloudBackup.createAndCopy(home: home, password: "Fixture-only-password-2026", force: true) }
+        #expect(try CodexCloudBackup.latestReceipt(in: cloud) == receipt)
+        #expect(FileManager.default.fileExists(atPath: cloud.appendingPathComponent(name).path))
+        try FileManager.default.removeItem(at: home.appendingPathComponent(".codex/memories_1.sqlite"))
+        try write("settings", home, ".codex/config.toml")
+        let kit = try CodexCloudBackup.createAndCopy(home: home, password: "Fixture-only-password-2026", force: true)
+        #expect(kit.version == 3 && kit.restoreVerifiedAt != nil)
         for folder in [local, cloud] {
-            let images = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-                .filter { CodexCloudBackup.isSnapshotFilename($0.lastPathComponent) }
-                .map(\.lastPathComponent).sorted()
-            #expect(images.sorted() == chain.artifacts.sorted())
+            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent(name).path))
+            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("Chain.json").path))
+            #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent(kit.filename).path))
         }
+    }
+
+    @Test func sizeBudgetFailsBeforeDiscardingAnySource() throws {
+        let home = try fixtureHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        try write(String(repeating: "a", count: 1024), home, ".codex/worktrees/demo/large.swift")
+        let stage = home.appendingPathComponent("Stage")
+        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
+        #expect(throws: (any Error).self) { try CodexCloudBackup.stage(home: home, destination: stage, now: Date(), maximumBytes: 32) }
+        #expect(try String(contentsOf: home.appendingPathComponent(".codex/worktrees/demo/large.swift"), encoding: .utf8).count == 1024)
+    }
+
+    @Test func retentionKeepsDailyWeeklyAndBudgetWithoutDependencies() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let kits = (0..<40).map { day -> CodexCloudBackup.Receipt in
+            var kit = CodexCloudBackup.Receipt(version: 3, filename: "kit-\(day)", createdAt: now.addingTimeInterval(-Double(day)*86400), sha256: "", fileCount: 1, databaseCount: 0)
+            kit.encryptedBytes = 100
+            return kit
+        }
+        let retained = CodexCloudBackup.retainedKits(kits)
+        #expect(retained.count == 9)
+        #expect(Array(retained.prefix(7)).map(\.filename) == Array(kits.prefix(7)).map(\.filename))
+        let bounded = CodexCloudBackup.retainedKits(kits, budget: 250)
+        #expect(bounded.map(\.filename) == ["kit-0", "kit-1"])
     }
 
     @Test func privateProcessInputDoesNotNeedCommandLineArguments() throws {
@@ -257,7 +257,7 @@ struct CodexCloudBackupTests {
         let now = Date()
         #expect(SystemHealthChecker.codexBackupWarning(configured: false, lastCopiedAt: nil, error: nil, now: now) != nil)
         #expect(SystemHealthChecker.codexBackupWarning(configured: true, lastCopiedAt: now, error: nil, now: now) == nil)
-        #expect(SystemHealthChecker.codexBackupWarning(configured: true, lastCopiedAt: now.addingTimeInterval(-90000), error: nil, now: now) != nil)
+        #expect(SystemHealthChecker.codexBackupWarning(configured: true, lastCopiedAt: now.addingTimeInterval(-180000), error: nil, now: now) != nil)
         #expect(SystemHealthChecker.codexBackupWarning(configured: true, lastCopiedAt: now, error: "failed", now: now)?.detail == "failed")
     }
 
