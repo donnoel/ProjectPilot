@@ -6,6 +6,33 @@ import TickCore
 
 @MainActor
 struct TicksViewModelTests {
+    @Test func weeklySummaryUsesMondayThroughSundayInSundayFirstLocale() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.firstWeekday = 1
+        func date(_ day: Int) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 11, day: day))!
+        }
+
+        var fixture = makeState()
+        let projectID = try #require(fixture.snapshot.projects.first?.id)
+        fixture.snapshot.sessions = [(8, 60.0), (9, 120.0), (15, 180.0), (16, 240.0)].map { day, duration in
+            TickWidgetStoredSession(id: UUID(), projectID: projectID, title: "Work on day \(day)",
+                                    notes: "", startedAt: nil, endedAt: nil, manualDuration: duration,
+                                    entrySource: "manual", autoTickRuleID: nil, createdAt: date(day))
+        }
+        let suite = "TicksViewModelTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = TicksViewModel(store: ViewModelTestStore(state: fixture), defaults: defaults)
+        await model.refresh()
+
+        let summary = model.weeklySummary(at: date(11), calendar: calendar)
+        #expect(summary.count == 2)
+        #expect(summary.spaces.count == 1)
+        #expect(summary.spaces.first?.duration == 300)
+    }
+
     @Test func authenticationFailureBlocksControlsWithoutDiscardingCachedSpaces() async throws {
         let fixture = makeState()
         let store = ViewModelTestStore(state: fixture, failure: .notAuthenticated)

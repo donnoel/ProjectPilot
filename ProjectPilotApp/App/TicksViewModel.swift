@@ -57,9 +57,13 @@ final class TicksViewModel: ObservableObject {
     }
 
     func weeklySummary(at date: Date, calendar: Calendar = .current) -> (spaces: [WeeklySpace], count: Int) {
-        guard let interval = calendar.dateInterval(of: .weekOfYear, for: date) else { return ([], 0) }
+        var workWeekCalendar = calendar
+        workWeekCalendar.firstWeekday = 2 // Monday, matching Tick on every regional calendar.
+        guard let interval = workWeekCalendar.dateInterval(of: .weekOfYear, for: date) else { return ([], 0) }
         // Match Tick's summary: assign each session to its reference date's week.
-        let sessions = state.snapshot.sessions.filter { interval.contains($0.referenceDate) }
+        let sessions = state.snapshot.sessions.filter {
+            $0.referenceDate >= interval.start && $0.referenceDate < interval.end
+        }
         let names = Dictionary(uniqueKeysWithValues: state.snapshot.projects.map { ($0.id, $0.name) })
         let rows = Dictionary(grouping: sessions, by: \.projectID).map { id, sessions in
             WeeklySpace(id: id, name: names[id] ?? "Unknown Space",
