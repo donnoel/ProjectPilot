@@ -45,31 +45,15 @@ Start with the touched target or focused test. Use broader tests only for shared
 
 ## Fixed local Apple targets
 
-Owner direction, November 1, 2026: use one local setup across projects. Read
-`/Users/donnoel/Development/DevSystem/notes/APPLE-LOCAL-TARGETS.md` before simulator
-work. This supersedes older local simulator/compiler examples below; hosted CI
-remains separate.
+Before local Apple builds, tests or simulator work, read
+`/Users/donnoel/Development/DevSystem/notes/APPLE-LOCAL-TARGETS.md`.
+That guide and its registry own the compiler, allowed targets and serial helper.
+Do not create substitute simulators, switch compilers on failure, or disturb
+another session's device/data. Physical acceptance and hosted CI remain separate.
 
-- Use `/Applications/Xcode-27-RC.app/Contents/Developer` for local work. No automatic fallback to Xcode 26.
-- Reuse **Local iPhone** as the only simulator; use Don's physical devices for platform acceptance. Mac apps use **My Mac**, arm64, without a simulator. Fixed IDs/runtimes are in `APPLE-LOCAL-TARGETS.json` beside that guide.
-- Use `python3 /Users/donnoel/Development/DevSystem/scripts/apple-local.py run <iphone|mac> -- xcodebuild ...` for concrete local builds/tests. It pins the destination, prevents parallel test clones, and serializes helper commands per target.
-- For XcodeBuildMCP, verify session defaults, set the current project/scheme, and use the exact device settings from `apple-local.py mcp <target>` with `useLatestOS: false`. Do not use stale project/bundle defaults.
-- Never create task-named simulators, choose another runtime/compiler on failure, erase shared data, or kill another session's simulator. Report an unavailable/busy pinned target and coordinate instead. Additional coverage or historical CI reproduction requires an explicit task-specific exception.
+## Owner workflow
 
-## Session summaries for Tix
-
-When Don says **"summary please,"** return only the following format:
-
-**Description:** One short sentence describing the problem addressed or work
-accomplished.
-
-**Summary:** A concise paragraph covering the cause, changes, verification, and
-any outstanding follow-up. Include release versions and deployment status when
-relevant.
-
-**Commit:** Short commit hash and exact commit subject. List multiple commits
-when applicable; state "No commits made" when appropriate.
-
-Cover the current working session. Report only verified results, distinguishing
-completed work from pending checks or acceptance. The Description goes into
-Tix's description field; Summary and Commit go into its notes.
+Inherit Don's personal collaboration preferences, Tix summary format and reporting
+cutoff from `~/.codex/AGENTS.md`; keep their full definitions there only. On another
+Mac, restore that global file from the encrypted ProjectPilot recovery kit before
+relying on these personal conventions. Repository-specific rules remain here.
