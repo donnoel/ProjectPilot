@@ -150,6 +150,12 @@ starts one immediately. Changes arriving during a copy remain pending.
 “Backup updated” means the local iCloud Drive copy completed, not that Apple's
 cloud upload has finished. Existing backup settings and data are unchanged.
 
+## Work tracking
+
+[GitHub Issues](https://github.com/donnoel/ProjectPilot/issues) is the source of truth for actionable work, priorities, and status. No open issue was identified during the November 16, 2026 reconciliation; this does not replace future release validation or prove every behavior independently tested.
+
+Keep prior owner-confirmed closeouts closed. Documentation records architecture, operating procedures, and dated evidence rather than a parallel task list. Capture new requests or reported regressions in GitHub before starting follow-up work.
+
 ## 📚 Documentation
 
 - [Repository guidance](AGENTS.md)
